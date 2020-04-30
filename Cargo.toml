@@ -1,0 +1,13 @@
+[package]
+name = "paperoni"
+version = "0.1.0"
+authors = ["Kenneth Gitere <gitere81@gmail.com>"]
+edition = "2018"
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+async-std = "1.5.0"
+kuchiki = "0.8.0"
+surf = "1.0.3"
