@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::io::Write;
 
 use kuchiki::{traits::*, NodeRef};
 
@@ -32,7 +32,7 @@ impl Extractor {
         extract_text_from_node(node_ref.as_node())
     }
 
-    pub fn extract_content(&self) {
+    pub fn extract_content<W: Write>(&self, writer: &mut W) {
         // Extract the useful parts of the head section
         let author: Option<String> =
             self.extract_attr_val("meta[name='author']", "content", |author| {
@@ -58,8 +58,10 @@ impl Extractor {
         let meta_attrs = MetaAttr::new(author, description, lang, tags, title);
         dbg!(meta_attrs);
 
+        // Extract the article
+
         let article_ref = self.root_node.select_first("article").unwrap();
-        let mut out_file = File::create("out.html").expect("Can't make file");
+
         for node_ref in article_ref.as_node().descendants() {
             match node_ref.data() {
                 kuchiki::NodeData::Element(..) | kuchiki::NodeData::Text(..) => (),
@@ -70,9 +72,7 @@ impl Extractor {
         for node_ref in article_ref.as_node().children() {
             match node_ref.data() {
                 kuchiki::NodeData::Element(_) => {
-                    node_ref
-                        .serialize(&mut out_file)
-                        .expect("Serialization failed");
+                    node_ref.serialize(writer).expect("Serialization failed");
                 }
 
                 _ => (),
@@ -177,5 +177,25 @@ mod test {
         let h1_text = extract_text_from_node(h1_node.as_node());
         assert!(h1_text.is_some());
         assert_eq!("Testing Paperoni".to_string(), h1_text.unwrap());
+    }
+
+    #[test]
+    fn test_extract_content() {
+        let extracted_html: String = r#"
+            <h1>Starting out</h1>
+            <p>Some Lorem Ipsum text here</p>
+            <p>Observe this picture</p>
+            <img alt="Random image" src="./img.jpg">
+        "#
+        .lines()
+        .map(|line| line.trim())
+        .collect();
+
+        let extractor = Extractor::from_html(TEST_HTML);
+        let mut output_string = Vec::new();
+        extractor.extract_content(&mut output_string);
+        let output_string = std::str::from_utf8(&output_string).unwrap();
+        assert!(output_string.len() > 0);
+        assert_eq!(extracted_html, output_string);
     }
 }
