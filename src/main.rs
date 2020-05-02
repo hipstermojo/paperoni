@@ -16,10 +16,9 @@ fn main() {
             "https://dev.to/steelwolf180/full-stack-development-in-django-3768"
         ];
         let html = fetch_url(urls[6]).await;
-        let extractor = Extractor::from_html(&html);
+        let mut extractor = Extractor::from_html(&html);
         println!("Extracting");
-        let mut out_file = File::create("out.html").expect("Can't make file");
-        extractor.extract_content(&mut out_file);
+        extractor.extract_content();
     });
 }
 

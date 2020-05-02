@@ -1,15 +1,15 @@
-use std::io::Write;
-
-use kuchiki::{traits::*, NodeRef};
+use kuchiki::{traits::*, ElementData, NodeDataRef, NodeRef};
 
 pub struct Extractor {
     pub root_node: NodeRef,
+    content: Option<NodeDataRef<ElementData>>,
 }
 
 impl Extractor {
     /// Create a new instance of an HTML extractor given an HTML string
     pub fn from_html(html_str: &str) -> Self {
         Extractor {
+            content: None,
             root_node: kuchiki::parse_html().one(html_str),
         }
     }
@@ -27,12 +27,15 @@ impl Extractor {
             .and_then(|data| data.attributes.borrow().get(attr_target).map(mapper))
     }
 
+    /// Extract the text of a DOM node given its CSS selector
     fn extract_inner_text(&self, css_selector: &str) -> Option<String> {
         let node_ref = self.root_node.select_first(css_selector).ok()?;
         extract_text_from_node(node_ref.as_node())
     }
 
-    pub fn extract_content<W: Write>(&self, writer: &mut W) {
+    /// Locates and extracts the HTML in a document which is determined to be
+    /// the source of the content
+    pub fn extract_content(&mut self) {
         // Extract the useful parts of the head section
         let author: Option<String> =
             self.extract_attr_val("meta[name='author']", "content", |author| {
@@ -68,12 +71,8 @@ impl Extractor {
                 _ => node_ref.detach(),
             }
         }
-        println!("Saving to file");
-        for node_ref in article_ref.as_node().children() {
-            match node_ref.data() {
-                kuchiki::NodeData::Element(_) => {
-                    node_ref.serialize(writer).expect("Serialization failed");
-                }
+        self.content = Some(article_ref);
+    }
 
                 _ => (),
             }
@@ -182,20 +181,37 @@ mod test {
     #[test]
     fn test_extract_content() {
         let extracted_html: String = r#"
-            <h1>Starting out</h1>
-            <p>Some Lorem Ipsum text here</p>
-            <p>Observe this picture</p>
-            <img alt="Random image" src="./img.jpg">
+            <article>
+                <h1>Starting out</h1>
+                <p>Some Lorem Ipsum text here</p>
+                <p>Observe this picture</p>
+                <img alt="Random image" src="./img.jpg">
+            </article>
         "#
         .lines()
         .map(|line| line.trim())
         .collect();
 
-        let extractor = Extractor::from_html(TEST_HTML);
-        let mut output_string = Vec::new();
-        extractor.extract_content(&mut output_string);
-        let output_string = std::str::from_utf8(&output_string).unwrap();
-        assert!(output_string.len() > 0);
-        assert_eq!(extracted_html, output_string);
+        let mut extractor = Extractor::from_html(
+            &TEST_HTML
+                .lines()
+                .map(|line| line.trim())
+                .collect::<String>(),
+        );
+
+        extractor.extract_content();
+        let mut output = Vec::new();
+        assert!(extractor.content.is_some());
+
+        extractor
+            .content
+            .unwrap()
+            .as_node()
+            .serialize(&mut output)
+            .expect("Unable to serialize output HTML");
+        let output = std::str::from_utf8(&output).unwrap();
+
+        assert_eq!(extracted_html, output);
+    }
     }
 }
