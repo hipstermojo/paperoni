@@ -1,6 +1,7 @@
 use std::fs::File;
 
 use async_std::task;
+use url::Url;
 
 mod extractor;
 
@@ -15,16 +16,21 @@ fn main() {
             "https://medium.com/typeforms-engineering-blog/the-beginners-guide-to-oauth-dancing-4b8f3666de10",
             "https://dev.to/steelwolf180/full-stack-development-in-django-3768"
         ];
-        let html = fetch_url(urls[6]).await;
+        let html = fetch_url(urls[3]).await;
         let mut extractor = Extractor::from_html(&html);
         println!("Extracting");
         extractor.extract_content();
+        extractor
+            .download_images(&Url::parse(urls[3]).unwrap())
+            .await
+            .expect("Unable to download images");
     });
 }
 
 async fn fetch_url(url: &str) -> String {
     let client = surf::Client::new();
     println!("Fetching...");
+    // TODO: Add middleware for following redirects
     client
         .get(url)
         .recv_string()

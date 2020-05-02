@@ -1,8 +1,12 @@
+use async_std::fs::File;
+use async_std::io::prelude::*;
 use kuchiki::{traits::*, ElementData, NodeDataRef, NodeRef};
+use url::Url;
 
 pub struct Extractor {
     pub root_node: NodeRef,
     content: Option<NodeDataRef<ElementData>>,
+    img_urls: Vec<String>,
 }
 
 impl Extractor {
@@ -10,6 +14,7 @@ impl Extractor {
     pub fn from_html(html_str: &str) -> Self {
         Extractor {
             content: None,
+            img_urls: Vec::new(),
             root_node: kuchiki::parse_html().one(html_str),
         }
     }
@@ -59,7 +64,6 @@ impl Extractor {
             .unwrap_or("en".to_string());
 
         let meta_attrs = MetaAttr::new(author, description, lang, tags, title);
-        dbg!(meta_attrs);
 
         // Extract the article
 
@@ -74,14 +78,89 @@ impl Extractor {
         self.content = Some(article_ref);
     }
 
-                _ => (),
+    /// Traverses the DOM tree of the content and retrieves the IMG URLs
+    fn extract_img_urls(&mut self) {
+        if let Some(content_ref) = &self.content {
+            for img_ref in content_ref.as_node().select("img").unwrap() {
+                img_ref.as_node().as_element().map(|img_elem| {
+                    img_elem.attributes.borrow().get("src").map(|img_url| {
+                        if !img_url.is_empty() {
+                            self.img_urls.push(img_url.to_string())
+                        }
+                    })
+                });
             }
         }
+    }
+
+    pub async fn download_images(&mut self, article_origin: &Url) -> async_std::io::Result<()> {
+        self.extract_img_urls();
+        for img_url in &self.img_urls {
+            dbg!(&self.img_urls);
+            let mut img_url = img_url.clone();
+
+            get_absolute_url(&mut img_url, article_origin);
+
+            println!("Fetching {}", img_url);
+            let mut img_response = surf::get(&img_url).await.expect("Unable to retrieve file");
+            let img_content: Vec<u8> = img_response.body_bytes().await.unwrap();
+            let img_ext = img_response
+                .header("Content-Type")
+                .and_then(map_mime_type_to_ext)
+                .unwrap();
+
+            let mut img_file = File::create(format!("{}{}", hash_url(&img_url), &img_ext)).await?;
+            img_file.write_all(&img_content).await?;
+            println!("Image file downloaded successfully");
+
+            // Update img URLs
+            // self.content.as_ref().map(|content_ref| {});
+        }
+        Ok(())
     }
 }
 fn extract_text_from_node(node: &NodeRef) -> Option<String> {
     node.first_child()
         .map(|child_ref| child_ref.text_contents())
+}
+
+/// Utility for hashing URLs. This is used to help store files locally with unique values
+fn hash_url(url: &str) -> String {
+    format!("{:x}", md5::compute(url.as_bytes()))
+}
+
+/// Handles getting the extension from a given MIME type. The extension starts with a dot
+fn map_mime_type_to_ext(mime_type: &str) -> Option<String> {
+    mime_type
+        .split("/")
+        .last()
+        .map(|format| {
+            if format == ("svg+xml") {
+                return "svg";
+            } else if format == "x-icon" {
+                "ico"
+            } else {
+                format
+            }
+        })
+        .map(|format| String::from(".") + format)
+}
+
+fn get_absolute_url(url: &mut String, request_url: &Url) {
+    if Url::parse(url).is_ok() {
+    } else if url.starts_with("/") {
+        *url = Url::parse(&format!(
+            "{}://{}",
+            request_url.scheme(),
+            request_url.host_str().unwrap()
+        ))
+        .unwrap()
+        .join(url)
+        .unwrap()
+        .into_string();
+    } else {
+        *url = request_url.join(url).unwrap().into_string();
+    }
 }
 
 #[derive(Debug)]
@@ -133,7 +212,7 @@ mod test {
                     <h1>Starting out</h1>
                     <p>Some Lorem Ipsum text here</p>
                     <p>Observe this picture</p>
-                    <img src="./img.jpg" alt="Random image">
+                    <img src="/img.jpg" alt="Random image">
                 </article>
                 <footer>
                     <p>Made in HTML</p>
@@ -213,5 +292,60 @@ mod test {
 
         assert_eq!(extracted_html, output);
     }
+
+    #[test]
+    fn test_extract_img_urls() {
+        let mut extractor = Extractor::from_html(TEST_HTML);
+        extractor.extract_content();
+        extractor.extract_img_urls();
+
+        assert!(extractor.img_urls.len() > 0);
+        assert_eq!(vec!["/img.jpg"], extractor.img_urls);
+    }
+
+    #[test]
+    fn test_map_mime_type_to_ext() {
+        let mime_types = vec![
+            "image/apng",
+            "image/bmp",
+            "image/gif",
+            "image/x-icon",
+            "image/jpeg",
+            "image/png",
+            "image/svg+xml",
+            "image/tiff",
+            "image/webp",
+        ];
+        let exts = mime_types
+            .into_iter()
+            .map(|mime_type| map_mime_type_to_ext(mime_type).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            vec![".apng", ".bmp", ".gif", ".ico", ".jpeg", ".png", ".svg", ".tiff", ".webp"],
+            exts
+        );
+    }
+
+    #[test]
+    fn test_get_absolute_url() {
+        let mut absolute_url = "https://example.image.com/images/1.jpg".to_owned();
+        let mut relative_url = "../../images/2.jpg".to_owned();
+        let mut relative_from_host_url = "/images/3.jpg".to_owned();
+        let host_url = Url::parse("https://example.image.com/blog/how-to-test-resolvers/").unwrap();
+        get_absolute_url(&mut absolute_url, &host_url);
+        assert_eq!("https://example.image.com/images/1.jpg", absolute_url);
+        get_absolute_url(&mut relative_url, &host_url);
+        assert_eq!("https://example.image.com/images/2.jpg", relative_url);
+        relative_url = "2-1.jpg".to_owned();
+        get_absolute_url(&mut relative_url, &host_url);
+        assert_eq!(
+            "https://example.image.com/blog/how-to-test-resolvers/2-1.jpg",
+            relative_url
+        );
+        get_absolute_url(&mut relative_from_host_url, &host_url);
+        assert_eq!(
+            "https://example.image.com/images/3.jpg",
+            relative_from_host_url
+        );
     }
 }
