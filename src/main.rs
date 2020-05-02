@@ -1,6 +1,7 @@
 use std::fs::File;
 
 use async_std::task;
+use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 use url::Url;
 
 mod extractor;
@@ -24,14 +25,22 @@ fn main() {
             .download_images(&Url::parse(urls[5]).unwrap())
             .await
             .expect("Unable to download images");
-        let mut out_file = File::create("out.html").unwrap();
+        let mut out_file = File::create("out.epub").unwrap();
+        let mut html_buf = Vec::new();
         extractor
             .content
             .unwrap()
             .as_node()
-            .serialize(&mut out_file)
+            .serialize(&mut html_buf)
             .expect("Unable to serialize");
-    });
+        let html_buf = std::str::from_utf8(&html_buf).unwrap();
+        EpubBuilder::new(ZipLibrary::new().unwrap())
+            .unwrap()
+            .add_content(EpubContent::new("code.xhtml", html_buf.as_bytes()))
+            .unwrap()
+            .generate(&mut out_file)
+            .unwrap();
+    })
 }
 
 async fn fetch_url(url: &str) -> String {

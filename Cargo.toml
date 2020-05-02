@@ -9,6 +9,7 @@ license = "MIT"
 
 [dependencies]
 async-std = "1.5.0"
+epub-builder = "0.4.5"
 kuchiki = "0.8.0"
 md5 = "0.7.0"
 surf = "1.0.3"
