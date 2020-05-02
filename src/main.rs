@@ -16,14 +16,21 @@ fn main() {
             "https://medium.com/typeforms-engineering-blog/the-beginners-guide-to-oauth-dancing-4b8f3666de10",
             "https://dev.to/steelwolf180/full-stack-development-in-django-3768"
         ];
-        let html = fetch_url(urls[3]).await;
+        let html = fetch_url(urls[5]).await;
         let mut extractor = Extractor::from_html(&html);
         println!("Extracting");
         extractor.extract_content();
         extractor
-            .download_images(&Url::parse(urls[3]).unwrap())
+            .download_images(&Url::parse(urls[5]).unwrap())
             .await
             .expect("Unable to download images");
+        let mut out_file = File::create("out.html").unwrap();
+        extractor
+            .content
+            .unwrap()
+            .as_node()
+            .serialize(&mut out_file)
+            .expect("Unable to serialize");
     });
 }
 

@@ -5,7 +5,7 @@ use url::Url;
 
 pub struct Extractor {
     pub root_node: NodeRef,
-    content: Option<NodeDataRef<ElementData>>,
+    pub content: Option<NodeDataRef<ElementData>>,
     img_urls: Vec<String>,
 }
 
@@ -96,7 +96,6 @@ impl Extractor {
     pub async fn download_images(&mut self, article_origin: &Url) -> async_std::io::Result<()> {
         self.extract_img_urls();
         for img_url in &self.img_urls {
-            dbg!(&self.img_urls);
             let mut img_url = img_url.clone();
 
             get_absolute_url(&mut img_url, article_origin);
@@ -108,13 +107,21 @@ impl Extractor {
                 .header("Content-Type")
                 .and_then(map_mime_type_to_ext)
                 .unwrap();
+            let img_path = format!("{}{}", hash_url(&img_url), &img_ext);
 
-            let mut img_file = File::create(format!("{}{}", hash_url(&img_url), &img_ext)).await?;
+            let mut img_file = File::create(&img_path).await?;
             img_file.write_all(&img_content).await?;
             println!("Image file downloaded successfully");
 
-            // Update img URLs
-            // self.content.as_ref().map(|content_ref| {});
+            let img_ref = self
+                .content
+                .as_mut()
+                .expect("Unable to get mutable ref")
+                .as_node()
+                .select_first(&format!("img[src='{}']", img_url))
+                .expect("Image node does not exist");
+            let mut img_node = img_ref.attributes.borrow_mut();
+            *img_node.get_mut("src").unwrap() = img_path;
         }
         Ok(())
     }
