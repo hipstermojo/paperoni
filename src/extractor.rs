@@ -96,10 +96,7 @@ impl Extractor {
         }
     }
 
-    pub async fn download_images<'a>(
-        &'a mut self,
-        article_origin: &'a Url,
-    ) -> async_std::io::Result<()> {
+    pub async fn download_images(&mut self, article_origin: &Url) -> async_std::io::Result<()> {
         let mut async_download_tasks = Vec::with_capacity(self.img_urls.len());
         self.extract_img_urls();
         println!("Downloading images to res/");
@@ -243,7 +240,7 @@ mod test {
                     <h1>Starting out</h1>
                     <p>Some Lorem Ipsum text here</p>
                     <p>Observe this picture</p>
-                    <img src="/img.jpg" alt="Random image">
+                    <img src="./img.jpg" alt="Random image">
                 </article>
                 <footer>
                     <p>Made in HTML</p>
@@ -331,7 +328,7 @@ mod test {
         extractor.extract_img_urls();
 
         assert!(extractor.img_urls.len() > 0);
-        assert_eq!(vec![("/img.jpg".to_string(), None)], extractor.img_urls);
+        assert_eq!(vec![("./img.jpg".to_string(), None)], extractor.img_urls);
     }
 
     #[test]
