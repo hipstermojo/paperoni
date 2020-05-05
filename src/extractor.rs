@@ -1,5 +1,6 @@
 use async_std::fs::File;
 use async_std::io::prelude::*;
+use async_std::task;
 use kuchiki::{traits::*, ElementData, NodeDataRef, NodeRef};
 use url::Url;
 
@@ -93,26 +94,41 @@ impl Extractor {
         }
     }
 
-    pub async fn download_images(&mut self, article_origin: &Url) -> async_std::io::Result<()> {
+    pub async fn download_images<'a>(
+        &'a mut self,
+        article_origin: &'a Url,
+    ) -> async_std::io::Result<()> {
+        let mut async_download_tasks = Vec::with_capacity(self.img_urls.len());
         self.extract_img_urls();
+
         for img_url in &self.img_urls {
             let mut img_url = img_url.clone();
-
             get_absolute_url(&mut img_url, article_origin);
+            async_download_tasks.push(task::spawn(async {
+                println!("Fetching {}", img_url);
+                let mut img_response = surf::get(&img_url).await.expect("Unable to retrieve file");
+                let img_content: Vec<u8> = img_response.body_bytes().await.unwrap();
+                let img_ext = img_response
+                    .header("Content-Type")
+                    .and_then(map_mime_type_to_ext)
+                    .unwrap();
 
-            println!("Fetching {}", img_url);
-            let mut img_response = surf::get(&img_url).await.expect("Unable to retrieve file");
-            let img_content: Vec<u8> = img_response.body_bytes().await.unwrap();
-            let img_ext = img_response
-                .header("Content-Type")
-                .and_then(map_mime_type_to_ext)
-                .unwrap();
-            let img_path = format!("{}{}", hash_url(&img_url), &img_ext);
+                let img_path = format!("{}{}", hash_url(&img_url), &img_ext);
+                let mut img_file = File::create(&img_path)
+                    .await
+                    .expect("Unable to create file");
+                img_file
+                    .write_all(&img_content)
+                    .await
+                    .expect("Unable to save to file");
+                println!("Image file downloaded successfully");
+                (img_url, img_path)
+            }));
+        }
 
-            let mut img_file = File::create(&img_path).await?;
-            img_file.write_all(&img_content).await?;
-            println!("Image file downloaded successfully");
-
+        for async_task in async_download_tasks {
+            let (img_url, img_path) = async_task.await;
+            // Update the image sources
             let img_ref = self
                 .content
                 .as_mut()
@@ -126,6 +142,7 @@ impl Extractor {
         Ok(())
     }
 }
+
 fn extract_text_from_node(node: &NodeRef) -> Option<String> {
     node.first_child()
         .map(|child_ref| child_ref.text_contents())
