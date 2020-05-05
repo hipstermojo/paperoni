@@ -4,10 +4,12 @@ use async_std::task;
 use kuchiki::{traits::*, ElementData, NodeDataRef, NodeRef};
 use url::Url;
 
+pub type ResourceInfo = (String, Option<String>);
+
 pub struct Extractor {
     pub root_node: NodeRef,
     pub content: Option<NodeDataRef<ElementData>>,
-    img_urls: Vec<String>,
+    pub img_urls: Vec<ResourceInfo>,
 }
 
 impl Extractor {
@@ -86,7 +88,7 @@ impl Extractor {
                 img_ref.as_node().as_element().map(|img_elem| {
                     img_elem.attributes.borrow().get("src").map(|img_url| {
                         if !img_url.is_empty() {
-                            self.img_urls.push(img_url.to_string())
+                            self.img_urls.push((img_url.to_string(), None))
                         }
                     })
                 });
@@ -100,20 +102,22 @@ impl Extractor {
     ) -> async_std::io::Result<()> {
         let mut async_download_tasks = Vec::with_capacity(self.img_urls.len());
         self.extract_img_urls();
-
+        println!("Downloading images to res/");
         for img_url in &self.img_urls {
-            let mut img_url = img_url.clone();
+            let mut img_url = img_url.0.clone();
             get_absolute_url(&mut img_url, article_origin);
             async_download_tasks.push(task::spawn(async {
-                println!("Fetching {}", img_url);
                 let mut img_response = surf::get(&img_url).await.expect("Unable to retrieve file");
                 let img_content: Vec<u8> = img_response.body_bytes().await.unwrap();
+                let img_mime = img_response
+                    .header("Content-Type")
+                    .map(|header| header.to_string());
                 let img_ext = img_response
                     .header("Content-Type")
                     .and_then(map_mime_type_to_ext)
                     .unwrap();
 
-                let img_path = format!("{}{}", hash_url(&img_url), &img_ext);
+                let img_path = format!("res/{}{}", hash_url(&img_url), &img_ext);
                 let mut img_file = File::create(&img_path)
                     .await
                     .expect("Unable to create file");
@@ -121,13 +125,15 @@ impl Extractor {
                     .write_all(&img_content)
                     .await
                     .expect("Unable to save to file");
-                println!("Image file downloaded successfully");
-                (img_url, img_path)
+
+                (img_url, img_path, img_mime)
             }));
         }
 
+        self.img_urls.clear();
+
         for async_task in async_download_tasks {
-            let (img_url, img_path) = async_task.await;
+            let (img_url, img_path, img_mime) = async_task.await;
             // Update the image sources
             let img_ref = self
                 .content
@@ -137,7 +143,8 @@ impl Extractor {
                 .select_first(&format!("img[src='{}']", img_url))
                 .expect("Image node does not exist");
             let mut img_node = img_ref.attributes.borrow_mut();
-            *img_node.get_mut("src").unwrap() = img_path;
+            *img_node.get_mut("src").unwrap() = img_path.clone();
+            self.img_urls.push((img_path, img_mime));
         }
         Ok(())
     }
@@ -324,7 +331,7 @@ mod test {
         extractor.extract_img_urls();
 
         assert!(extractor.img_urls.len() > 0);
-        assert_eq!(vec!["/img.jpg"], extractor.img_urls);
+        assert_eq!(vec![("/img.jpg".to_string(), None)], extractor.img_urls);
     }
 
     #[test]
