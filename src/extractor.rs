@@ -101,10 +101,10 @@ impl Extractor {
         self.extract_img_urls();
         println!("Downloading images to res/");
         for img_url in &self.img_urls {
-            let mut img_url = img_url.0.clone();
-            get_absolute_url(&mut img_url, article_origin);
-            async_download_tasks.push(task::spawn(async {
-                let mut img_response = surf::get(&img_url).await.expect("Unable to retrieve file");
+            let img_url = img_url.0.clone();
+            let abs_url = get_absolute_url(&img_url, article_origin);
+            async_download_tasks.push(task::spawn(async move {
+                let mut img_response = surf::get(&abs_url).await.expect("Unable to retrieve file");
                 let img_content: Vec<u8> = img_response.body_bytes().await.unwrap();
                 let img_mime = img_response
                     .header("Content-Type")
@@ -114,7 +114,7 @@ impl Extractor {
                     .and_then(map_mime_type_to_ext)
                     .unwrap();
 
-                let img_path = format!("res/{}{}", hash_url(&img_url), &img_ext);
+                let img_path = format!("res/{}{}", hash_url(&abs_url), &img_ext);
                 let mut img_file = File::create(&img_path)
                     .await
                     .expect("Unable to create file");
@@ -174,10 +174,11 @@ fn map_mime_type_to_ext(mime_type: &str) -> Option<String> {
         .map(|format| String::from(".") + format)
 }
 
-fn get_absolute_url(url: &mut String, request_url: &Url) {
+fn get_absolute_url(url: &str, request_url: &Url) -> String {
     if Url::parse(url).is_ok() {
+        url.to_owned()
     } else if url.starts_with("/") {
-        *url = Url::parse(&format!(
+        Url::parse(&format!(
             "{}://{}",
             request_url.scheme(),
             request_url.host_str().unwrap()
@@ -185,9 +186,9 @@ fn get_absolute_url(url: &mut String, request_url: &Url) {
         .unwrap()
         .join(url)
         .unwrap()
-        .into_string();
+        .into_string()
     } else {
-        *url = request_url.join(url).unwrap().into_string();
+        request_url.join(url).unwrap().into_string()
     }
 }
 
@@ -356,24 +357,21 @@ mod test {
 
     #[test]
     fn test_get_absolute_url() {
-        let mut absolute_url = "https://example.image.com/images/1.jpg".to_owned();
-        let mut relative_url = "../../images/2.jpg".to_owned();
-        let mut relative_from_host_url = "/images/3.jpg".to_owned();
+        let absolute_url = "https://example.image.com/images/1.jpg";
+        let relative_url = "../../images/2.jpg";
+        let relative_from_host_url = "/images/3.jpg";
         let host_url = Url::parse("https://example.image.com/blog/how-to-test-resolvers/").unwrap();
-        get_absolute_url(&mut absolute_url, &host_url);
-        assert_eq!("https://example.image.com/images/1.jpg", absolute_url);
-        get_absolute_url(&mut relative_url, &host_url);
-        assert_eq!("https://example.image.com/images/2.jpg", relative_url);
-        relative_url = "2-1.jpg".to_owned();
-        get_absolute_url(&mut relative_url, &host_url);
+        let abs_url = get_absolute_url(&absolute_url, &host_url);
+        assert_eq!("https://example.image.com/images/1.jpg", abs_url);
+        let abs_url = get_absolute_url(&relative_url, &host_url);
+        assert_eq!("https://example.image.com/images/2.jpg", abs_url);
+        let relative_url = "2-1.jpg";
+        let abs_url = get_absolute_url(&relative_url, &host_url);
         assert_eq!(
             "https://example.image.com/blog/how-to-test-resolvers/2-1.jpg",
-            relative_url
+            abs_url
         );
-        get_absolute_url(&mut relative_from_host_url, &host_url);
-        assert_eq!(
-            "https://example.image.com/images/3.jpg",
-            relative_from_host_url
-        );
+        let abs_url = get_absolute_url(&relative_from_host_url, &host_url);
+        assert_eq!("https://example.image.com/images/3.jpg", abs_url);
     }
 }
