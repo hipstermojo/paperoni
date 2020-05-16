@@ -13,4 +13,5 @@ epub-builder = "0.4.5"
 kuchiki = "0.8.0"
 md5 = "0.7.0"
 surf = "1.0.3"
+structopt = { version = "0.3" }
 url = "2.1.1"
