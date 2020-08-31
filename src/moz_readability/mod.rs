@@ -29,6 +29,8 @@ impl Readability {
     }
     pub fn parse(&mut self) {
         self.unwrap_no_script_tags();
+        self.remove_scripts();
+        self.prep_document();
     }
     /// Recursively check if node is image, or if node contains exactly only one image
     /// whether as a direct child or as its descendants.
