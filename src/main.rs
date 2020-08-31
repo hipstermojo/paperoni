@@ -7,6 +7,7 @@ use url::Url;
 
 mod cli;
 mod extractor;
+mod moz_readability;
 
 use extractor::Extractor;
 fn main() {

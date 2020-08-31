@@ -704,9 +704,9 @@ dependencies = [
 
 [[package]]
 name = "kuchiki"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1beeffc5ae5ab0def2cb85e26063a8e6b4f579b0adec3805bf87472086948956"
+checksum = "1ea8e9c6e031377cff82ee3001dc8026cdf431ed4e2e6b51f98ab8c73484a358"
 dependencies = [
  "cssparser",
  "html5ever 0.25.1",
@@ -1014,6 +1014,7 @@ version = "0.1.0"
 dependencies = [
  "async-std",
  "epub-builder",
+ "html5ever 0.25.1",
  "kuchiki",
  "md5",
  "structopt",
