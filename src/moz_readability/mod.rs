@@ -17,6 +17,7 @@ const PHRASING_ELEMS: [&str; 39] = [
     "output", "progress", "q", "ruby", "samp", "script", "select", "small", "span", "strong",
     "sub", "sup", "textarea", "time", "var", "wbr",
 ];
+mod regexes;
 
 pub struct Readability {
     root_node: NodeRef,

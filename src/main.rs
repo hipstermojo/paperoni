@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate lazy_static;
+
 use std::fs::File;
 
 use async_std::{fs::create_dir, fs::remove_dir_all, task};
