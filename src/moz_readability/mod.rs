@@ -8,15 +8,41 @@ use kuchiki::{
     traits::*,
     NodeData, NodeRef,
 };
-use regex::Regex;
 
+const SHARE_ELEMENT_THRESHOLD: usize = 500;
+const READABILITY_SCORE: &'static str = "readability-score";
 const HTML_NS: &'static str = "http://www.w3.org/1999/xhtml";
+// TODO: Change to HashSet
 const PHRASING_ELEMS: [&str; 39] = [
     "abbr", "audio", "b", "bdo", "br", "button", "cite", "code", "data", "datalist", "dfn", "em",
     "embed", "i", "img", "input", "kbd", "label", "mark", "math", "meter", "noscript", "object",
     "output", "progress", "q", "ruby", "samp", "script", "select", "small", "span", "strong",
     "sub", "sup", "textarea", "time", "var", "wbr",
 ];
+// TODO: Change to HashSet
+const DEFAULT_TAGS_TO_SCORE: [&str; 9] =
+    ["section", "h2", "h3", "h4", "h5", "h6", "p", "td", "pre"];
+// TODO: Change to HashSet
+const ALTER_TO_DIV_EXCEPTIONS: [&str; 4] = ["div", "article", "section", "p"];
+const PRESENTATIONAL_ATTRIBUTES: [&str; 12] = [
+    "align",
+    "background",
+    "bgcolor",
+    "border",
+    "cellpadding",
+    "cellspacing",
+    "frame",
+    "hspace",
+    "rules",
+    "style",
+    "valign",
+    "vspace",
+];
+
+const DATA_TABLE_DESCENDANTS: [&str; 5] = ["col", "colgroup", "tfoot", "thead", "th"];
+// TODO: Change to HashSet
+const DEPRECATED_SIZE_ATTRIBUTE_ELEMS: [&str; 5] = ["table", "th", "td", "hr", "pre"];
+
 mod regexes;
 
 pub struct Readability {
@@ -85,15 +111,11 @@ impl Readability {
             imgs.filter(|img_node_ref| {
                 let img_attrs = img_node_ref.attributes.borrow();
                 !img_attrs.map.iter().any(|(name, attr)| {
-                    // TODO: Replace with regex
                     &name.local == "src"
                         || &name.local == "srcset"
                         || &name.local == "data-src"
                         || &name.local == "data-srcset"
-                        || attr.value.ends_with(".jpg")
-                        || attr.value.ends_with(".jpeg")
-                        || attr.value.ends_with(".png")
-                        || attr.value.ends_with(".webp")
+                        || regexes::is_match_img_ext(&attr.value)
                 })
             })
             .for_each(|img_ref| img_ref.as_node().detach());
@@ -130,11 +152,7 @@ impl Readability {
                             !val.value.trim().is_empty()
                                 && (&attr.local == "src"
                                     || &attr.local == "srcset"
-                                    // TODO: Replace with regex
-                                    || val.value.ends_with(".jpg")
-                                    || val.value.ends_with(".jpeg")
-                                    || val.value.ends_with(".png")
-                                    || val.value.ends_with(".webp"))
+                                    || regexes::is_match_img_ext(&val.value))
                         });
                         for (prev_attr, prev_value) in prev_attrs {
                             match new_img.attributes.borrow().get(&prev_attr.local) {
@@ -405,19 +423,16 @@ impl Readability {
                 let elem_attrs = elem_data.attributes.borrow();
                 let rel_attr = elem_attrs.get("rel");
                 let itemprop_attr = elem_attrs.get("itemprop");
-                let byline_regex = Regex::new(r"(?i)byline|author|dateline|writtenby|p-author")
-                    .expect("Unable to create byline_regex");
                 let is_byline = (if rel_attr.is_some() {
                     rel_attr.unwrap() == "author"
                 } else if itemprop_attr.is_some() {
                     itemprop_attr.unwrap().contains("author")
                 } else {
-                    byline_regex.is_match(match_string)
+                    regexes::is_match_byline(match_string)
                 }) && Self::is_valid_byline(&node_ref.text_contents());
                 if is_byline {
                     self.byline = Some(node_ref.text_contents().trim().to_owned());
                 }
-                dbg!(is_byline);
                 is_byline
             } else {
                 false
@@ -513,9 +528,7 @@ impl Readability {
         }
         !node_ref.children().any(|node| {
             node.as_text().is_some()
-                && Regex::new(r"\S$")
-                    .unwrap()
-                    .is_match(&node.text_contents().trim_end())
+                && regexes::is_match_has_content(&node.text_contents().trim_end())
         })
     }
 
@@ -523,9 +536,8 @@ impl Readability {
         let will_normalize = normalize_spaces.unwrap_or(true);
         let text = node_ref.text_contents();
         let text = text.trim();
-        let normalize_regex = Regex::new(r"\s{2,}").unwrap();
         if will_normalize {
-            return normalize_regex.replace_all(&text, " ").to_string();
+            return regexes::NORMALIZE_REGEX.replace_all(&text, " ").to_string();
         }
         text.to_owned()
     }
@@ -603,15 +615,13 @@ impl Readability {
     fn get_class_weight(node_ref: &NodeRef) -> i32 {
         //TODO: Add check for weighing classes
         let mut weight = 0;
-        let positive_regex = Regex::new(r"(?i)article|body|content|entry|hentry|h-entry|main|page|pagination|post|text|blog|story").unwrap();
-        let negative_regex = Regex::new(r"(?i)hidden|^hid$| hid$| hid |^hid |banner|combx|comment|com-|contact|foot|footer|footnote|gdpr|masthead|media|meta|outbrain|promo|related|scroll|share|shoutbox|sidebar|skyscraper|sponsor|shopping|tags|tool|widget").unwrap();
         let node_elem = node_ref.as_element().unwrap();
         let node_attrs = node_elem.attributes.borrow();
         if let Some(id) = node_attrs.get("id") {
             if !id.trim().is_empty() {
-                weight = if positive_regex.is_match(id) {
+                weight = if regexes::is_match_positive(id) {
                     weight + 25
-                } else if negative_regex.is_match(id) {
+                } else if regexes::is_match_negative(id) {
                     weight - 25
                 } else {
                     weight
@@ -620,9 +630,9 @@ impl Readability {
         }
         if let Some(class) = node_attrs.get("class") {
             if !class.trim().is_empty() {
-                weight = if positive_regex.is_match(class) {
+                weight = if regexes::is_match_positive(class) {
                     weight + 25
-                } else if negative_regex.is_match(class) {
+                } else if regexes::is_match_negative(class) {
                     weight - 25
                 } else {
                     weight
@@ -641,8 +651,8 @@ impl Readability {
             // should not also be mutably borrowed
             score += Self::get_class_weight(node_ref);
             let mut elem_attrs = element.attributes.borrow_mut();
-            elem_attrs.insert("readability-score", score.to_string());
-            let readability = elem_attrs.get_mut("readability-score");
+            elem_attrs.insert(READABILITY_SCORE, score.to_string());
+            let readability = elem_attrs.get_mut(READABILITY_SCORE);
             match &*element.name.local {
                 "div" => score += 5,
                 "pre" | "td" | "blockquote" => score += 3,
@@ -717,8 +727,8 @@ impl Readability {
                         continue;
                     }
                 }
-                let data_table_descendants = vec!["col", "colgroup", "tfoot", "thead", "th"];
-                if data_table_descendants
+
+                if DATA_TABLE_DESCENDANTS
                     .iter()
                     .any(|tag_name| table_node.select_first(tag_name).is_ok())
                 {
@@ -750,35 +760,27 @@ impl Readability {
 
     /// Convert images and figures that have properties like data-src into images that can be loaded without JS
     fn fix_lazy_images(node_ref: &mut NodeRef) {
-        let imgs = node_ref.select("img").unwrap();
-        let pictures = node_ref.select("picture").unwrap();
-        let figures = node_ref.select("figure").unwrap();
-        let regex = Regex::new(r"(?i)^data:\s*([^\s;,]+)\s*;\s*base64\s*").unwrap();
-        let nodes = imgs.chain(pictures).chain(figures);
+        let nodes = node_ref.select("img, picture, figure").unwrap();
         for node in nodes {
             let mut node_attr = node.attributes.borrow_mut();
             if let Some(src) = node_attr.get("src") {
-                let src_captures = regex.captures(src);
+                let src_captures = regexes::B64_DATA_URL_REGEX.captures(src);
                 if src_captures.is_some() {
                     let svg_capture = src_captures.unwrap().get(1);
                     if svg_capture.is_some() && svg_capture.unwrap().as_str() == "image/svg+xml" {
                         continue;
                     }
 
-                    let svg_could_be_removed = node_attr
+                    let src_could_be_removed = node_attr
                         .map
                         .iter()
                         .filter(|(name, _)| &name.local != "src")
-                        .filter(|(_, val)| {
-                            let regex = Regex::new(r"(?i)\.(jpg|jpeg|png|webp)").unwrap();
-                            regex.is_match(&val.value)
-                        })
+                        .filter(|(_, val)| regexes::is_match_img_ext(&val.value))
                         .count()
                         > 0;
 
-                    if svg_could_be_removed {
-                        let base64_regex = Regex::new(r"(?i)base64\s*").unwrap();
-                        let b64_start = base64_regex.find(src).unwrap().start();
+                    if src_could_be_removed {
+                        let b64_start = regexes::BASE64_REGEX.find(src).unwrap().start();
                         let b64_length = src.len() - b64_start;
                         if b64_length < 133 {
                             node_attr.remove("src");
@@ -789,7 +791,7 @@ impl Readability {
             let src = node_attr.get("src");
             let srcset = node_attr.get("srcset");
             let class = node_attr.get("class");
-            if (src.is_some() || (srcset.is_some() && srcset.unwrap() != "null"))
+            if (src.is_some() || srcset.is_some())
                 && class.is_some()
                 && !class.unwrap().contains("lazy")
             {
@@ -803,11 +805,9 @@ impl Readability {
                 .filter(|(key, _)| !(&key.local == "src" || &key.local == "srcset"))
                 .for_each(|(_, val)| {
                     let mut copy_to = "";
-                    let srcset_regex = Regex::new(r"\.(jpg|jpeg|png|webp)\s+\d").unwrap();
-                    let src_regex = Regex::new(r"^\s*\S+\.(jpg|jpeg|png|webp)\S*\s*$").unwrap();
-                    if srcset_regex.is_match(&val.value) {
+                    if regexes::is_match_srcset(&val.value) {
                         copy_to = "srcset";
-                    } else if src_regex.is_match(&val.value) {
+                    } else if regexes::is_match_src_regex(&val.value) {
                         copy_to = "src";
                     }
                     if copy_to.len() > 0 {
@@ -818,9 +818,8 @@ impl Readability {
                             }
                         } else if tag_name == "figure" {
                             let node_ref = node.as_node();
-                            let imgs = node_ref.select("img").unwrap();
-                            let pictures = node_ref.select("picture").unwrap();
-                            if imgs.chain(pictures).count() > 0 {
+                            let img_picture_nodes = node_ref.select("img, picture").unwrap();
+                            if img_picture_nodes.count() > 0 {
                                 let img = NodeRef::new_element(
                                     QualName::new(
                                         None,
@@ -872,124 +871,125 @@ impl Readability {
                     Some(-1),
                     Some(is_data_table),
                 )
-            })
-            .map(|node_data_ref|{
-                let weight =  Self::get_class_weight(node_data_ref.as_node());
-                (node_data_ref,weight)
-            })
-            .filter(|(_, weight)| weight < &0)
-            .filter(|(node_data_ref,_)| get_char_count(node_data_ref.as_node()) < 10)
-            .filter(|(node_data_ref,_)|{
-                let embed_tags = vec!["object", "embed", "iframe"];
-                let mut embeds = node_data_ref
-                    .as_node()
-                    .select(embed_tags.join(",").as_str())
-                    .unwrap();
-                if embed_tags.contains(&&*node_data_ref.name.local) {
-                    embeds.next();
-                }
-                let videos_regex = Regex::new(r"(?i)\/\/(www\.)?((dailymotion|youtube|youtube-nocookie|player\.vimeo|v\.qq)\.com|(archive|upload\.wikimedia)\.org|player\.twitch\.tv)").unwrap();
-                !(embeds.any(|node| &node.name.local == "object") ||  embeds.any(|node_data_ref| {
-                         let attrs = node_data_ref.attributes.borrow();
-                         !attrs.map.iter().any(|(key,_)|videos_regex.is_match(&key.local))
-                     }))
-            })
-            .for_each(|(node_data_ref, weight)| {
-                let node = node_data_ref.as_node();
+            });
+        let mut next_node = nodes.next();
+        while let Some(node_data_ref) = next_node {
+            next_node = nodes.next();
+            let node = node_data_ref.as_node();
+            let weight = Self::get_class_weight(node);
+            // Remove all elements with negative class weights
+            if weight < 0 {
+                node.detach();
+                continue;
+            }
 
-                let mut p_nodes = node_data_ref.as_node().select("p").unwrap().count();
-                let mut img_nodes = node_data_ref.as_node().select("img").unwrap().count();
-                let mut li_nodes = node_data_ref.as_node().select("li").unwrap().count();
-                let mut input_nodes = node_data_ref.as_node().select("input").unwrap().count();
+            if get_char_count(node) >= 10 {
+                continue;
+            }
+            let mut embeds = node_data_ref
+                .as_node()
+                .select("object, embed, iframe")
+                .unwrap();
+            let can_skip_embed = embeds.any(|node_data_ref| {
+                &node_data_ref.name.local == "object" || {
+                    let attrs = node_data_ref.attributes.borrow();
 
-                match node_name.as_ref() {
-                    "p" => p_nodes -= 1,
-                    "img" =>img_nodes -= 1,
-                    "li" => li_nodes -= 1,
-                    "input" => input_nodes -= 1,
-                    _ => ()
-                }
-
-                let p = p_nodes as f32;
-                let img = img_nodes as f32;
-
-                let embed_count = node.select("object, embed, iframe").unwrap().count();
-                let link_density = Self::get_link_density(node);
-                let content_length = Self::get_inner_text(node, None).len();
-                let has_figure_ancestor = Self::has_ancestor_tag(node, "figure", None, None);
-                let have_to_remove = (img_nodes > 1 && p /img < 0.5 && !has_figure_ancestor) ||
-                    (!is_list && li_nodes > p_nodes) || (input_nodes > (p_nodes / 3)) ||
-                    (!is_list && content_length < 25 && (img_nodes == 0 || img_nodes > 2) && !has_figure_ancestor) ||
-                    (!is_list && weight < 25 && link_density > 0.2) || (weight >= 25 && link_density > 0.5) ||
-                    ((embed_count == 1 && content_length < 75) || embed_count > 1);
-                if have_to_remove {
-                    node.detach();
+                    attrs
+                        .map
+                        .iter()
+                        .any(|(_, val)| regexes::is_match_videos(&val.value))
                 }
             });
+            if can_skip_embed {
+                continue;
+            }
+
+            let p_nodes = node_data_ref.as_node().select("p").unwrap().count();
+            let img_nodes = node_data_ref.as_node().select("img").unwrap().count();
+            let li_nodes = node_data_ref.as_node().select("li").unwrap().count() as i32 - 100;
+            let input_nodes = node_data_ref.as_node().select("input").unwrap().count();
+
+            let p = p_nodes as f32;
+            let img = img_nodes as f32;
+
+            let embed_count = node.select("object, embed, iframe").unwrap().count();
+            let link_density = Self::get_link_density(node);
+            let content_length = Self::get_inner_text(node, None).len();
+            let has_figure_ancestor = Self::has_ancestor_tag(node, "figure", None, None);
+            let have_to_remove = (img_nodes > 1 && p / img < 0.5 && !has_figure_ancestor)
+                || (!is_list && li_nodes > p_nodes as i32)
+                || (input_nodes > (p_nodes / 3))
+                || (!is_list
+                    && content_length < 25
+                    && (img_nodes == 0 || img_nodes > 2)
+                    && !has_figure_ancestor)
+                || (!is_list && weight < 25 && link_density > 0.2)
+                || (weight >= 25 && link_density > 0.5)
+                || ((embed_count == 1 && content_length < 75) || embed_count > 1);
+            if have_to_remove {
+                node.detach();
+            }
+        }
     }
 
     /// Clean a node of all elements of type "tag". (Unless it's a YouTube or Vimeo video)
     fn clean(node_ref: &mut NodeRef, tag_name: &str) {
+        // Can be changed to a HashSet
         let is_embed = vec!["object", "embed", "iframe"].contains(&tag_name);
         let mut nodes = node_ref.select(tag_name).unwrap();
-        let videos_regex = Regex::new(r"(?i)\/\/(www\.)?((dailymotion|youtube|youtube-nocookie|player\.vimeo|v\.qq)\.com|(archive|upload\.wikimedia)\.org|player\.twitch\.tv)").unwrap();
-        if &node_ref.as_element().unwrap().name.local == tag_name {
+        if node_ref.as_element().is_some() && &node_ref.as_element().unwrap().name.local == tag_name
+        {
             nodes.next();
         }
-        nodes
-            .filter(|node_data_ref| {
-                !is_embed
-                    || {
-                        let attrs = node_data_ref.attributes.borrow();
-                        !attrs
-                            .map
-                            .iter()
-                            .any(|(key, _)| videos_regex.is_match(&key.local))
-                    }
-                    || &node_data_ref.name.local == "object"
-            })
-            .for_each(|node_data_ref| node_data_ref.as_node().detach());
+        let mut nodes = nodes.filter(|node_data_ref| {
+            !is_embed
+                || {
+                    let attrs = node_data_ref.attributes.borrow();
+                    !attrs
+                        .map
+                        .iter()
+                        .any(|(_, val)| regexes::is_match_videos(&val.value))
+                }
+                || &node_data_ref.name.local == "object" // This currently does not check the innerHTML.
+        });
+        let mut node = nodes.next();
+        while let Some(node_data_ref) = node {
+            node = nodes.next();
+            node_data_ref.as_node().detach()
+        }
     }
 
     /// Clean out spurious headers from an Element. Checks things like classnames and link density.
     fn clean_headers(node_ref: &mut NodeRef) {
-        let mut nodes = node_ref.select("h1,h2").unwrap();
-
-        if vec!["h1", "h2"].contains(&node_ref.as_element().unwrap().name.local.as_ref()) {
+        let mut nodes = node_ref
+            .select("h1, h2")
+            .unwrap()
+            .filter(|node_data_ref| Self::get_class_weight(node_data_ref.as_node()) < 0);
+        if node_ref.as_element().is_some()
+            && vec!["h1", "h2"].contains(&node_ref.as_element().unwrap().name.local.as_ref())
+        {
             nodes.next();
         }
-        nodes
-            .filter(|node_data_ref| Self::get_class_weight(node_data_ref.as_node()) < 0)
-            .for_each(|node_data_ref| node_data_ref.as_node().detach());
+        let mut node = nodes.next();
+
+        while let Some(node_data_ref) = node {
+            node = nodes.next();
+            node_data_ref.as_node().detach();
+        }
     }
 
     /// Remove the style attribute on every element and descendants.
     fn clean_styles(node_ref: &mut NodeRef) {
-        let presentational_attributes = vec![
-            "align",
-            "background",
-            "bgcolor",
-            "border",
-            "cellpadding",
-            "cellspacing",
-            "frame",
-            "hspace",
-            "rules",
-            "style",
-            "valign",
-            "vspace",
-        ];
-        let deprecated_size_attribute_elems = vec!["table", "th", "td", "hr", "pre"];
         node_ref
             .inclusive_descendants()
             .elements()
             .filter(|node| &node.name.local != "svg")
             .for_each(|node_data_ref| {
                 let mut attrs = node_data_ref.attributes.borrow_mut();
-                presentational_attributes.iter().for_each(|pres_attr| {
+                PRESENTATIONAL_ATTRIBUTES.iter().for_each(|pres_attr| {
                     attrs.remove(*pres_attr);
                 });
-                if deprecated_size_attribute_elems.contains(&node_data_ref.name.local.as_ref()) {
+                if DEPRECATED_SIZE_ATTRIBUTE_ELEMS.contains(&node_data_ref.name.local.as_ref()) {
                     attrs.remove("width");
                     attrs.remove("height");
                 }
@@ -1026,13 +1026,10 @@ impl Readability {
         Self::clean(node_ref, "link");
         Self::clean(node_ref, "aside");
 
-        // TODO: Extract as constant
-        let share_element_threshold = 500;
-        let regex = Regex::new(r"(\b|_)(share|sharedaddy)(\b|_)").unwrap();
-
         node_ref.children().for_each(|mut node| {
             Self::clean_matched_nodes(&mut node, |node: &NodeRef, match_string| {
-                regex.is_match(match_string) && node.text_contents().len() < share_element_threshold
+                regexes::is_match_share_elems(match_string)
+                    && node.text_contents().len() < SHARE_ELEMENT_THRESHOLD
             });
         });
 
@@ -1554,7 +1551,7 @@ impl Readability {
 
 #[cfg(test)]
 mod test {
-    use super::{Readability, SizeInfo, HTML_NS};
+    use super::{Readability, SizeInfo, HTML_NS, READABILITY_SCORE};
     use html5ever::{LocalName, Namespace, QualName};
     use kuchiki::traits::*;
     use kuchiki::NodeRef;
@@ -2348,31 +2345,31 @@ characters. For that reason, this <p> tag could not be a byline because it's too
         let mut node = target.as_node().clone();
         Readability::initialize_node(&mut node);
         let node_attrs = node.as_element().unwrap().attributes.borrow();
-        assert_eq!(Some("55"), node_attrs.get("readability-score"));
+        assert_eq!(Some("55"), node_attrs.get(READABILITY_SCORE));
 
         target = doc.root_node.select_first("h1.hidden").unwrap();
         let mut node = target.as_node().clone();
         Readability::initialize_node(&mut node);
         let node_attrs = node.as_element().unwrap().attributes.borrow();
-        assert_eq!(Some("-30"), node_attrs.get("readability-score"));
+        assert_eq!(Some("-30"), node_attrs.get(READABILITY_SCORE));
 
         target = doc.root_node.select_first("p#story").unwrap();
         let mut node = target.as_node().clone();
         Readability::initialize_node(&mut node);
         let node_attrs = node.as_element().unwrap().attributes.borrow();
-        assert_eq!(Some("25"), node_attrs.get("readability-score"));
+        assert_eq!(Some("25"), node_attrs.get(READABILITY_SCORE));
 
         target = doc.root_node.select_first("div#comments").unwrap();
         let mut node = target.as_node().clone();
         Readability::initialize_node(&mut node);
         let node_attrs = node.as_element().unwrap().attributes.borrow();
-        assert_eq!(Some("-20"), node_attrs.get("readability-score"));
+        assert_eq!(Some("-20"), node_attrs.get(READABILITY_SCORE));
 
         target = doc.root_node.select_first("pre.comment").unwrap();
         let mut node = target.as_node().clone();
         Readability::initialize_node(&mut node);
         let node_attrs = node.as_element().unwrap().attributes.borrow();
-        assert_eq!(Some("-22"), node_attrs.get("readability-score"));
+        assert_eq!(Some("-22"), node_attrs.get(READABILITY_SCORE));
     }
 
     #[test]
