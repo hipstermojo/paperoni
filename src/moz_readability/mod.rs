@@ -1017,10 +1017,12 @@ impl Readability {
     /// forms, strip extraneous <p> tags, etc.
     fn prep_article(&mut self, node_ref: &mut NodeRef) {
         Self::clean_styles(node_ref);
+        self.mark_data_tables();
         Self::fix_lazy_images(node_ref);
         Self::clean_conditionally(node_ref, "form");
         Self::clean_conditionally(node_ref, "fieldset");
         Self::clean(node_ref, "object");
+        Self::clean(node_ref, "embed");
         Self::clean(node_ref, "h1");
         Self::clean(node_ref, "footer");
         Self::clean(node_ref, "link");
@@ -2517,4 +2519,132 @@ characters. For that reason, this <p> tag could not be a byline because it's too
 
     #[test]
     fn test_fix_lazy_images() {}
+    #[test]
+    fn test_clean() {
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <pre>A Paperoni test</pre>
+                <iframe width="420" height="345" src="https://www.youtube.com/embed/dQw4w9WgXcQ">
+                </iframe>
+                <iframe src="https://www.rust-lang.org/" name="rust_iframe" height="300px" width="100%" title="Rustlang Homepage">
+                </iframe>
+                <iframe src="https://crates.io/" name="crates_iframe" height="300px" width="100%" title="Crates.io Homepage">
+                </iframe>
+                <pre></pre>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        Readability::clean(&mut doc.root_node.clone(), "pre");
+        let pre_count = doc.root_node.select("pre").unwrap().count();
+        assert_eq!(0, pre_count);
+
+        Readability::clean(&mut doc.root_node.clone(), "iframe");
+        let iframe_count = doc.root_node.select("iframe").unwrap().count();
+        assert_eq!(1, iframe_count);
+        let iframe = doc.root_node.select_first("iframe").unwrap();
+        let iframe_attrs = iframe.attributes.borrow();
+        assert_eq!(
+            Some("https://www.youtube.com/embed/dQw4w9WgXcQ"),
+            iframe_attrs.get("src")
+        );
+    }
+
+    #[test]
+    fn test_clean_headers() {
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <h1 class="tags">#blog, #rust</h1>
+                <h2>A blog in Rust</h2>
+                <p>Foo bar baz quux</p>
+                <h1 class="footer">Copyright info</h1>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        let body = doc.root_node.select_first("body").unwrap();
+        let h1_count = doc.root_node.select("h1").unwrap().count();
+        let h2_count = doc.root_node.select("h2").unwrap().count();
+        assert_eq!(2, h1_count);
+        assert_eq!(1, h2_count);
+        Readability::clean_headers(&mut body.as_node().clone());
+        let h1_count = doc.root_node.select("h1").unwrap().count();
+        let h2_count = doc.root_node.select("h2").unwrap().count();
+        assert_eq!(0, h1_count);
+        assert_eq!(1, h2_count);
+    }
+
+    #[test]
+    fn test_clean_styles() {
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <div style="color:red; padding: 10px" id="red">A red box</div>
+                <div height="100px" style="color:blue; padding: 10px" id="blue">
+                    A blue box
+                </div>
+                <svg width="100" height="100">
+                    <circle cx="50" cy="50" r="40" fill="green" />
+                </svg>
+                <table width="100%" bgcolor="yellow">
+                    <tr>
+                        <th>Col 1</th>
+                        <th>Col 2</th>
+                    </tr>
+                </table>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        Readability::clean_styles(&mut doc.root_node.clone());
+        let red_div = doc.root_node.select_first("#red").unwrap();
+        let blue_div = doc.root_node.select_first("#blue").unwrap();
+        let svg = doc.root_node.select_first("svg").unwrap();
+        let table = doc.root_node.select_first("table").unwrap();
+
+        let red_div_attrs = red_div.attributes.borrow();
+        let blue_div_attrs = blue_div.attributes.borrow();
+        let svg_attrs = svg.attributes.borrow();
+        let table_attrs = table.attributes.borrow();
+
+        assert_eq!(1, red_div_attrs.map.len());
+        assert_eq!(false, red_div_attrs.contains("style"));
+        assert_eq!(2, blue_div_attrs.map.len());
+        assert_eq!(false, blue_div_attrs.contains("style"));
+        assert_eq!(true, blue_div_attrs.contains("height"));
+        assert_eq!(2, svg_attrs.map.len());
+        assert_eq!(0, table_attrs.map.len());
+    }
+
+    #[test]
+    fn test_clean_matched_nodes() {
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <p class="example">In Rust you can have 3 kinds of variables</p>
+                <ul>
+                    <li class="example">Immutable</li>
+                    <li class="example">Mutable</li>
+                    <li class="example">Constant</li>
+                </ul>
+                <p>Onto more tests</p>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        let body = doc.root_node.select_first("body").unwrap();
+        Readability::clean_matched_nodes(&mut body.as_node().clone(), |node_ref, match_str| {
+            &node_ref.as_element().unwrap().name.local == "li" && match_str.contains("example")
+        });
+        let p_count = doc.root_node.select("p").unwrap().count();
+        let li_count = doc.root_node.select("li").unwrap().count();
+        assert_eq!(2, p_count);
+        assert_eq!(0, li_count);
+    }
 }
