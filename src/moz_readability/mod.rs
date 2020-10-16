@@ -175,8 +175,9 @@ impl Readability {
                                 .borrow_mut()
                                 .insert(attr_name, prev_value.value.clone());
                         }
-
-                        let inner_node_child = Self::next_element(inner_node_ref.first_child());
+                        // WARN: This assumes `next_element` returns an element node!!
+                        let inner_node_child =
+                            Self::next_element(inner_node_ref.first_child(), true);
                         prev_elem.insert_after(inner_node_child.unwrap());
                         prev_elem.detach();
                     }
@@ -218,8 +219,9 @@ impl Readability {
     ///   <div>foo<br>bar<p>abc</p></div>
     fn replace_brs(&mut self) {
         if let Ok(mut br_tags) = self.root_node.select("br") {
+            // The uses of `next_element` here are safe as it explicitly ensures the next element is an element node
             while let Some(br_tag) = br_tags.next() {
-                let mut next = Self::next_element(br_tag.as_node().next_sibling());
+                let mut next = Self::next_element(br_tag.as_node().next_sibling(), false);
                 let mut replaced = false;
                 while let Some(next_elem) = next {
                     if next_elem.as_element().is_some()
@@ -228,7 +230,7 @@ impl Readability {
                         replaced = true;
                         let br_sibling = next_elem.next_sibling();
                         next_elem.detach();
-                        next = Self::next_element(br_sibling);
+                        next = Self::next_element(br_sibling, false);
                     } else {
                         break;
                     }
@@ -331,7 +333,9 @@ impl Readability {
     /// Finds the next element, starting from the given node, and ignoring
     /// whitespace in between. If the given node is an element, the same node is
     /// returned.
-    fn next_element(node_ref: Option<NodeRef>) -> Option<NodeRef> {
+    /// The must_be_element argument ensure the next element is actually an element node.
+    /// This is likely to factored out into a new function.
+    fn next_element(node_ref: Option<NodeRef>, must_be_element: bool) -> Option<NodeRef> {
         // TODO: Could probably be refactored to use the elements method
         let mut node_ref = node_ref;
         while node_ref.is_some() {
@@ -339,6 +343,10 @@ impl Readability {
                 NodeData::Element(_) => break,
                 _ => {
                     if node_ref.as_ref().unwrap().text_contents().trim().is_empty() {
+                        node_ref = node_ref.as_ref().unwrap().next_sibling();
+                    } else if must_be_element
+                        && !node_ref.as_ref().unwrap().text_contents().trim().is_empty()
+                    {
                         node_ref = node_ref.as_ref().unwrap().next_sibling();
                     } else {
                         break;
@@ -448,16 +456,17 @@ impl Readability {
     ///
     /// Calling this in a loop will traverse the DOM depth-first.
     fn get_next_node(node_ref: &NodeRef, ignore_self_and_kids: bool) -> Option<NodeRef> {
+        // WARN: The uses of `next_element` here assume it returns an element node.
         let has_elem_children = node_ref.children().elements().count();
         if !ignore_self_and_kids && has_elem_children > 0 {
-            Self::next_element(node_ref.first_child())
-        } else if let Some(next_sibling) = Self::next_element(node_ref.next_sibling()) {
+            Self::next_element(node_ref.first_child(), true)
+        } else if let Some(next_sibling) = Self::next_element(node_ref.next_sibling(), true) {
             Some(next_sibling)
         } else {
             // Keep walking up the node hierarchy until a parent with element siblings is found
             let mut node = node_ref.parent();
             while let Some(parent) = node {
-                if let Some(next_sibling) = Self::next_element(parent.next_sibling()) {
+                if let Some(next_sibling) = Self::next_element(parent.next_sibling(), true) {
                     return Some(next_sibling);
                 } else {
                     node = parent.parent();
@@ -845,7 +854,7 @@ impl Readability {
     fn clean_conditionally(node_ref: &mut NodeRef, tag_name: &str) {
         // TODO: Add flag check
         let is_list = tag_name == "ul" || tag_name == "ol";
-        let mut nodes = node_ref.select(tag_name).unwrap();
+        let mut nodes = node_ref.descendants().select(tag_name).unwrap();
         let is_data_table = |node_ref: &NodeRef| {
             let node_elem = node_ref.as_element().unwrap();
             let attrs = node_elem.attributes.borrow();
@@ -853,10 +862,6 @@ impl Readability {
         };
         let get_char_count = |node_ref: &NodeRef| node_ref.text_contents().matches(",").count();
         let node_name = &node_ref.as_element().unwrap().name.local;
-        // Because select returns an inclusive iterator, we should skip the first one.
-        if node_name == tag_name {
-            nodes.next();
-        }
         let mut nodes = nodes
             // Do not remove data tables
             .filter(|node_data_ref| {
@@ -935,11 +940,7 @@ impl Readability {
     fn clean(node_ref: &mut NodeRef, tag_name: &str) {
         // Can be changed to a HashSet
         let is_embed = vec!["object", "embed", "iframe"].contains(&tag_name);
-        let mut nodes = node_ref.select(tag_name).unwrap();
-        if node_ref.as_element().is_some() && &node_ref.as_element().unwrap().name.local == tag_name
-        {
-            nodes.next();
-        }
+        let mut nodes = node_ref.descendants().select(tag_name).unwrap();
         let mut nodes = nodes.filter(|node_data_ref| {
             !is_embed
                 || {
@@ -1077,29 +1078,33 @@ impl Readability {
             })
             .for_each(|node_data_ref| node_data_ref.as_node().detach());
 
+        // TODO: Fix the code for deleting nodes
         node_ref
             .select("br")
             .unwrap()
             .filter(|node_data_ref| {
                 let br_node = node_data_ref.as_node();
-                let next_node = Self::next_element(br_node.next_sibling());
+                // WARN: This assumes `next_element` returns an element node.
+                let next_node = Self::next_element(br_node.next_sibling(), true);
                 next_node.is_some() && &next_node.unwrap().as_element().unwrap().name.local == "p"
             })
             .for_each(|node_data_ref| node_data_ref.as_node().detach());
 
         node_ref.select("table").unwrap().for_each(|node_data_ref| {
             let table_node = node_data_ref.as_node();
-            let table_child = Self::next_element(table_node.first_child());
+            // WARN: This assumes `next_element` returns an element node.
+            let table_child = Self::next_element(table_node.first_child(), true);
             let tbody = if Self::has_single_tag_inside_element(&table_node, "tbody") {
                 table_child.as_ref().unwrap()
             } else {
                 table_node
             };
 
+            // WARN: This block assumes `next_element` returns an element node
             if Self::has_single_tag_inside_element(&tbody, "tr") {
-                let row = Self::next_element(tbody.first_child()).unwrap();
+                let row = Self::next_element(tbody.first_child(), true).unwrap();
                 if Self::has_single_tag_inside_element(&row, "td") {
-                    let cell = Self::next_element(row.first_child()).unwrap();
+                    let cell = Self::next_element(row.first_child(), true).unwrap();
                     let tag = if cell
                         .children()
                         .all(|cell_child| Self::is_phrasing_content(&cell_child))
@@ -1623,12 +1628,13 @@ mod test {
          <!-- Commented content  -->
          <p id="b">This is another node. The next line is just whitespace</p>
 
-         This is standalone text"#;
+         This is standalone text
+         <p> Some <span>more</span> text</p>"#;
         let doc = Readability::new(html_str);
         let p = doc.root_node.select_first("#a").unwrap();
         let p = p.as_node();
         let mut p_node_option: Option<NodeRef> = Some(p.clone());
-        p_node_option = Readability::next_element(p_node_option);
+        p_node_option = Readability::next_element(p_node_option, false);
         assert_eq!(Some(p.clone()), p_node_option);
 
         let p_node_option = p_node_option.unwrap();
@@ -1636,20 +1642,20 @@ mod test {
         let p_node_option_attr = p_node_option.unwrap().attributes.borrow();
         assert_eq!("a", p_node_option_attr.get("id").unwrap());
 
-        let next = Readability::next_element(p.next_sibling());
+        let next = Readability::next_element(p.next_sibling(), false);
 
         let next = next.unwrap();
         let next_elem = next.as_element();
         let next_attr = next_elem.unwrap().attributes.borrow();
         assert_eq!("b", next_attr.get("id").unwrap());
 
-        let next = Readability::next_element(next.next_sibling());
+        let next = Readability::next_element(next.next_sibling(), false);
 
         let next = next.unwrap();
         assert_eq!(true, next.as_text().is_some());
         assert_eq!("This is standalone text", next.text_contents().trim());
 
-        let next = Readability::next_element(None);
+        let next = Readability::next_element(None, false);
         assert_eq!(None, next);
     }
 
