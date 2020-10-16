@@ -811,11 +811,10 @@ impl Readability {
                         copy_to = "src";
                     }
                     if copy_to.len() > 0 {
+                        let new_val = val.value.clone();
                         let tag_name = &node.name.local;
                         if tag_name == "img" || tag_name == "picture" {
-                            if let Some(attr) = node_attr.get_mut(copy_to) {
-                                *attr = val.value.clone();
-                            }
+                            node_attr.insert(copy_to, new_val);
                         } else if tag_name == "figure" {
                             let node_ref = node.as_node();
                             let img_picture_nodes = node_ref.select("img, picture").unwrap();
@@ -831,7 +830,7 @@ impl Readability {
                                 {
                                     let mut img_attr =
                                         img.as_element().unwrap().attributes.borrow_mut();
-                                    img_attr.insert(copy_to, val.value.clone());
+                                    img_attr.insert(copy_to, new_val);
                                 }
                                 node_ref.append(img);
                             }
@@ -850,7 +849,7 @@ impl Readability {
         let is_data_table = |node_ref: &NodeRef| {
             let node_elem = node_ref.as_element().unwrap();
             let attrs = node_elem.attributes.borrow();
-            !(attrs.get("readability-data-table") == Some("true"))
+            attrs.get("readability-data-table") == Some("true")
         };
         let get_char_count = |node_ref: &NodeRef| node_ref.text_contents().matches(",").count();
         let node_name = &node_ref.as_element().unwrap().name.local;
@@ -858,10 +857,10 @@ impl Readability {
         if node_name == tag_name {
             nodes.next();
         }
-        nodes
+        let mut nodes = nodes
             // Do not remove data tables
             .filter(|node_data_ref| {
-                !(node_name == "table" && is_data_table(node_data_ref.as_node()))
+                !(&node_data_ref.name.local == "table" && is_data_table(node_data_ref.as_node()))
             })
             // Do not remove if it is a child of a data table
             .filter(|node_data_ref| {
@@ -2518,7 +2517,124 @@ characters. For that reason, this <p> tag could not be a byline because it's too
     }
 
     #[test]
-    fn test_fix_lazy_images() {}
+    fn test_fix_lazy_images() {
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <img id="svg-uri" alt="Basketball" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2ZXJzaW9uPSIxLjEiIGlkPSJMYXllcl8xIiB4PSIwcHgiIHk9IjBweCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGVuYWJsZS1iYWNrZ3JvdW5kPSJuZXcgMCAwIDEwMCAxMDAiIHhtbDpzcGFjZT0icHJlc2VydmUiIGhlaWdodD0iMTAwcHgiIHdpZHRoPSIxMDBweCI+CjxnPgoJPHBhdGggZD0iTTI4LjEsMzYuNmM0LjYsMS45LDEyLjIsMS42LDIwLjksMS4xYzguOS0wLjQsMTktMC45LDI4LjksMC45YzYuMywxLjIsMTEuOSwzLjEsMTYuOCw2Yy0xLjUtMTIuMi03LjktMjMuNy0xOC42LTMxLjMgICBjLTQuOS0wLjItOS45LDAuMy0xNC44LDEuNEM0Ny44LDE3LjksMzYuMiwyNS42LDI4LjEsMzYuNnoiLz4KCTxwYXRoIGQ9Ik03MC4zLDkuOEM1Ny41LDMuNCw0Mi44LDMuNiwzMC41LDkuNWMtMyw2LTguNCwxOS42LTUuMywyNC45YzguNi0xMS43LDIwLjktMTkuOCwzNS4yLTIzLjFDNjMuNywxMC41LDY3LDEwLDcwLjMsOS44eiIvPgoJPHBhdGggZD0iTTE2LjUsNTEuM2MwLjYtMS43LDEuMi0zLjQsMi01LjFjLTMuOC0zLjQtNy41LTctMTEtMTAuOGMtMi4xLDYuMS0yLjgsMTIuNS0yLjMsMTguN0M5LjYsNTEuMSwxMy40LDUwLjIsMTYuNSw1MS4zeiIvPgoJPHBhdGggZD0iTTksMzEuNmMzLjUsMy45LDcuMiw3LjYsMTEuMSwxMS4xYzAuOC0xLjYsMS43LTMuMSwyLjYtNC42YzAuMS0wLjIsMC4zLTAuNCwwLjQtMC42Yy0yLjktMy4zLTMuMS05LjItMC42LTE3LjYgICBjMC44LTIuNywxLjgtNS4zLDIuNy03LjRjLTUuMiwzLjQtOS44LDgtMTMuMywxMy43QzEwLjgsMjcuOSw5LjgsMjkuNyw5LDMxLjZ6Ii8+Cgk8cGF0aCBkPSJNMTUuNCw1NC43Yy0yLjYtMS02LjEsMC43LTkuNywzLjRjMS4yLDYuNiwzLjksMTMsOCwxOC41QzEzLDY5LjMsMTMuNSw2MS44LDE1LjQsNTQuN3oiLz4KCTxwYXRoIGQ9Ik0zOS44LDU3LjZDNTQuMyw2Ni43LDcwLDczLDg2LjUsNzYuNGMwLjYtMC44LDEuMS0xLjYsMS43LTIuNWM0LjgtNy43LDctMTYuMyw2LjgtMjQuOGMtMTMuOC05LjMtMzEuMy04LjQtNDUuOC03LjcgICBjLTkuNSwwLjUtMTcuOCwwLjktMjMuMi0xLjdjLTAuMSwwLjEtMC4yLDAuMy0wLjMsMC40Yy0xLDEuNy0yLDMuNC0yLjksNS4xQzI4LjIsNDkuNywzMy44LDUzLjksMzkuOCw1Ny42eiIvPgoJPHBhdGggZD0iTTI2LjIsODguMmMzLjMsMiw2LjcsMy42LDEwLjIsNC43Yy0zLjUtNi4yLTYuMy0xMi42LTguOC0xOC41Yy0zLjEtNy4yLTUuOC0xMy41LTktMTcuMmMtMS45LDgtMiwxNi40LTAuMywyNC43ICAgQzIwLjYsODQuMiwyMy4yLDg2LjMsMjYuMiw4OC4yeiIvPgoJPHBhdGggZD0iTTMwLjksNzNjMi45LDYuOCw2LjEsMTQuNCwxMC41LDIxLjJjMTUuNiwzLDMyLTIuMyw0Mi42LTE0LjZDNjcuNyw3Niw1Mi4yLDY5LjYsMzcuOSw2MC43QzMyLDU3LDI2LjUsNTMsMjEuMyw0OC42ICAgYy0wLjYsMS41LTEuMiwzLTEuNyw0LjZDMjQuMSw1Ny4xLDI3LjMsNjQuNSwzMC45LDczeiIvPgo8L2c+Cjwvc3ZnPg==" />
+                <img id="normal-src" src="./foo.jpg">
+                <img id="gif-uri" src="data:image/gif;base64,R0lGODlhEAAQAMQAAORHHOVSKudfOulrSOp3WOyDZu6QdvCchPGolfO0o/XBs/fNwfjZ0frl3/zy7////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACH5BAkAABAALAAAAAAQABAAAAVVICSOZGlCQAosJ6mu7fiyZeKqNKToQGDsM8hBADgUXoGAiqhSvp5QAnQKGIgUhwFUYLCVDFCrKUE1lBavAViFIDlTImbKC5Gm2hB0SlBCBMQiB0UjIQA7" alt="star" width="16" height="16">
+                <img id="gif-uri-remove-src" data-src="./not-real-gif.png" src="data:image/gif;base64,R0lGODlhEAAQAMQAAORHHOVSKudfOulrSOp3WOyDZu6QdvCchPGolfO0o/" alt="star" width="16" height="16">
+                <img id="lazy-loaded" class="lazy" src="placeholder.jpg" data-src="./720x640.jpg">
+                <picture>
+                    <source media="(min-width:650px)" srcset="img_pink_flowers.jpg">
+                    <source media="(min-width:465px)" srcset="img_white_flower.jpg">
+                    <img src="img_orange_flowers.jpg" alt="Flowers" style="width:auto;">
+                </picture>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        let svg_uri = doc.root_node.select_first("#svg-uri").unwrap();
+        let normal_src = doc.root_node.select_first("#normal-src").unwrap();
+        let gif_uri = doc.root_node.select_first("#gif-uri").unwrap();
+        let picture = doc.root_node.select_first("picture").unwrap();
+        Readability::fix_lazy_images(&mut doc.root_node.clone());
+        assert_eq!(svg_uri, doc.root_node.select_first("#svg-uri").unwrap());
+        assert_eq!(
+            normal_src,
+            doc.root_node.select_first("#normal-src").unwrap()
+        );
+        assert_eq!(gif_uri, doc.root_node.select_first("#gif-uri").unwrap());
+        assert_eq!(picture, doc.root_node.select_first("picture").unwrap());
+
+        let gif_uri_remove_src = doc.root_node.select_first("#gif-uri-remove-src").unwrap();
+        let gif_uri_remove_src_attrs = gif_uri_remove_src.attributes.borrow();
+        assert_eq!(
+            gif_uri_remove_src_attrs.get("data-src"),
+            gif_uri_remove_src_attrs.get("src")
+        );
+        let lazy_loaded = doc.root_node.select_first("#lazy-loaded").unwrap();
+        let lazy_loaded_attrs = lazy_loaded.attributes.borrow();
+        assert_eq!(
+            lazy_loaded_attrs.get("data-src"),
+            lazy_loaded_attrs.get("src")
+        );
+    }
+
+    #[test]
+    fn test_clean_conditionally() {
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <table id="data-table">
+                    <caption>Monthly savings</caption>
+                    <tr>
+                        <th>Month</th>
+                        <th>Savings</th>
+                    </tr>
+                    <tr>
+                        <td>January</td>
+                        <td>$100</td>
+                    </tr>
+                    <tr>
+                        <td>February</td>
+                        <td>$50</td>
+                    </tr>
+                </table>
+                <table width="100%" border="0" id="display-table">
+                    <tr valign="top">
+                        <td width="20%">Left</td>
+                        <td height="200" width="60%">Main</td>
+                        <td width="20%">Right</td>
+                    </tr>
+                </table>
+                <table width="100%" border="0" id="display-table-removed" class="comment">
+                    <tr valign="top">
+                        <td width="40%">One</td>
+                        <td width="60%">Two</td>
+                    </tr>
+                </table>
+                <div class="comment">
+                    <p>The parent div will be deleted due to negative weight classes</p>
+                </div>
+                <div id="some-content">
+                    The days of the week: Mon, Tue, Wed, Thur, Fri, Sat, Sun.
+                    The months of the year: Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Oct, Nov, Dec.
+                </div>
+                <div id="embeds">
+                    <iframe width="420" height="345" src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe>
+                </div>
+                <div id="footer">
+                    <p>Check out more articles</p>
+                    <ul>
+                        <li><img src="article.jpg"><p>Article 1</p></li>
+                        <li><img src="article.jpg"><p>Article 2</p></li>
+                        <li><img src="article.jpg"><p>Article 3</p></li>
+                    </ul>
+                </div>
+            </body>
+        </html>
+        "#;
+        let mut doc = Readability::new(html_str);
+        let body = doc.root_node.select_first("body").unwrap();
+        doc.mark_data_tables();
+        Readability::clean_conditionally(&mut body.as_node().clone(), "table");
+        assert_eq!(true, doc.root_node.select_first("#data-table").is_ok());
+        assert_eq!(false, doc.root_node.select_first("#display-table").is_ok());
+        assert_eq!(
+            false,
+            doc.root_node.select_first("#display-table-removed").is_ok()
+        );
+        Readability::clean_conditionally(&mut body.as_node().clone(), "div");
+        assert_eq!(false, doc.root_node.select_first("div.comment").is_ok());
+        assert_eq!(true, doc.root_node.select_first("div#some-content").is_ok());
+        assert_eq!(true, doc.root_node.select_first("div#embeds").is_ok());
+        assert_eq!(false, doc.root_node.select_first("div#footer").is_ok());
+    }
+
     #[test]
     fn test_clean() {
         let html_str = r#"
