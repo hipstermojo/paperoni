@@ -49,6 +49,8 @@ pub struct Readability {
     root_node: NodeRef,
     byline: Option<String>,
     article_title: String,
+    pub article_node: Option<NodeRef>,
+    article_dir: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -63,6 +65,8 @@ impl Readability {
             root_node: kuchiki::parse_html().one(html_str),
             byline: None,
             article_title: "".into(),
+            article_node: None,
+            article_dir: None,
         }
     }
     pub fn parse(&mut self) {
@@ -70,6 +74,7 @@ impl Readability {
         self.remove_scripts();
         self.prep_document();
         // TODO: Add implementation for get_article_metadata
+        self.grab_article();
     }
 
     /// Recursively check if node is image, or if node contains exactly only one image
@@ -303,8 +308,7 @@ impl Readability {
 
     /// Replaces the specified NodeRef by replacing its name. This works by copying over its
     /// children and its attributes.
-    fn set_node_tag(node_ref: &NodeRef, name: &str) {
-        // TODO: Change function to own node_ref so that a user does not try to use it after dropping
+    fn set_node_tag(node_ref: &NodeRef, name: &str) -> NodeRef {
         match node_ref.as_element() {
             Some(elem) => {
                 let attributes = elem.attributes.borrow().clone().map.into_iter();
@@ -316,10 +320,13 @@ impl Readability {
                     replacement.append(child);
                 }
                 node_ref.insert_before(replacement);
+                let new_node = node_ref.previous_sibling().unwrap();
                 node_ref.detach();
+                return new_node;
             }
             None => (),
         }
+        node_ref.clone()
     }
 
     fn is_whitespace(node_ref: &NodeRef) -> bool {
@@ -655,18 +662,18 @@ impl Readability {
     /// className/id for special names to add to its score.
     fn initialize_node(node_ref: &mut NodeRef) {
         if let Some(element) = node_ref.as_element() {
-            let mut score = 0;
+            let mut score = 0.0;
             // This must be computed first because it borrows the NodeRef which
             // should not also be mutably borrowed
-            score += Self::get_class_weight(node_ref);
+            score += Self::get_class_weight(node_ref) as f32;
             let mut elem_attrs = element.attributes.borrow_mut();
             elem_attrs.insert(READABILITY_SCORE, score.to_string());
             let readability = elem_attrs.get_mut(READABILITY_SCORE);
             match &*element.name.local {
-                "div" => score += 5,
-                "pre" | "td" | "blockquote" => score += 3,
-                "address" | "ol" | "ul" | "dl" | "dd" | "dt" | "li" | "form" => score -= 3,
-                "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "th" => score -= 5,
+                "div" => score += 5.0,
+                "pre" | "td" | "blockquote" => score += 3.0,
+                "address" | "ol" | "ul" | "dl" | "dd" | "dt" | "li" | "form" => score -= 3.0,
+                "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "th" => score -= 5.0,
                 _ => (),
             }
             if let Some(x) = readability {
@@ -854,14 +861,14 @@ impl Readability {
     fn clean_conditionally(node_ref: &mut NodeRef, tag_name: &str) {
         // TODO: Add flag check
         let is_list = tag_name == "ul" || tag_name == "ol";
-        let mut nodes = node_ref.descendants().select(tag_name).unwrap();
+        let nodes = node_ref.descendants().select(tag_name).unwrap();
         let is_data_table = |node_ref: &NodeRef| {
             let node_elem = node_ref.as_element().unwrap();
             let attrs = node_elem.attributes.borrow();
             attrs.get("readability-data-table") == Some("true")
         };
         let get_char_count = |node_ref: &NodeRef| node_ref.text_contents().matches(",").count();
-        let node_name = &node_ref.as_element().unwrap().name.local;
+
         let mut nodes = nodes
             // Do not remove data tables
             .filter(|node_data_ref| {
@@ -940,18 +947,21 @@ impl Readability {
     fn clean(node_ref: &mut NodeRef, tag_name: &str) {
         // Can be changed to a HashSet
         let is_embed = vec!["object", "embed", "iframe"].contains(&tag_name);
-        let mut nodes = node_ref.descendants().select(tag_name).unwrap();
-        let mut nodes = nodes.filter(|node_data_ref| {
-            !is_embed
-                || {
-                    let attrs = node_data_ref.attributes.borrow();
-                    !attrs
-                        .map
-                        .iter()
-                        .any(|(_, val)| regexes::is_match_videos(&val.value))
-                }
-                || &node_data_ref.name.local == "object" // This currently does not check the innerHTML.
-        });
+        let mut nodes = node_ref
+            .descendants()
+            .select(tag_name)
+            .unwrap()
+            .filter(|node_data_ref| {
+                !is_embed
+                    || {
+                        let attrs = node_data_ref.attributes.borrow();
+                        !attrs
+                            .map
+                            .iter()
+                            .any(|(_, val)| regexes::is_match_videos(&val.value))
+                    }
+                    || &node_data_ref.name.local == "object" // This currently does not check the innerHTML.
+            });
         let mut node = nodes.next();
         while let Some(node_data_ref) = node {
             node = nodes.next();
@@ -962,14 +972,10 @@ impl Readability {
     /// Clean out spurious headers from an Element. Checks things like classnames and link density.
     fn clean_headers(node_ref: &mut NodeRef) {
         let mut nodes = node_ref
+            .descendants()
             .select("h1, h2")
             .unwrap()
             .filter(|node_data_ref| Self::get_class_weight(node_data_ref.as_node()) < 0);
-        if node_ref.as_element().is_some()
-            && vec!["h1", "h2"].contains(&node_ref.as_element().unwrap().name.local.as_ref())
-        {
-            nodes.next();
-        }
         let mut node = nodes.next();
 
         while let Some(node_data_ref) = node {
@@ -1122,9 +1128,17 @@ impl Readability {
     /// Using a variety of metrics (content score, classname, element types), find the content that is most likely to be the stuff
     /// a user wants to read. Then return it wrapped up in a div.
     fn grab_article(&mut self) {
+        println!("Grabbing article");
         // var doc = this._doc;
         // var isPaging = (page !== null ? true: false);
         // page = page ? page : this._doc.body;
+        let page = self.root_node.select_first("body");
+        if page.is_err() {
+            // TODO:Have error logging for this
+            println!("Document has no <body>");
+            return;
+        }
+        let page = page.unwrap();
 
         // // We can't grab an article if we don't have a page!
         // if (!page) {
@@ -1134,424 +1148,496 @@ impl Readability {
 
         // var pageCacheHtml = page.innerHTML;
 
-        // while (true) {
-        //   var stripUnlikelyCandidates = this._flagIsActive(this.FLAG_STRIP_UNLIKELYS);
+        loop {
+            //   var stripUnlikelyCandidates = this._flagIsActive(this.FLAG_STRIP_UNLIKELYS);
+            // TODO: Add flag for checking this
+            let strip_unlikely_candidates = true;
 
-        //   // First, node prepping. Trash nodes that look cruddy (like ones with the
-        //   // class name "comment", etc), and turn divs into P tags where they have been
-        //   // used inappropriately (as in, where they contain no other block level elements.)
-        //   var elementsToScore = [];
-        //   var node = this._doc.documentElement;
+            //   // First, node prepping. Trash nodes that look cruddy (like ones with the
+            //   // class name "comment", etc), and turn divs into P tags where they have been
+            //   // used inappropriately (as in, where they contain no other block level elements.)
+            let mut elements_to_score: Vec<NodeRef> = Vec::new();
+            let mut node = Some(
+                self.root_node
+                    .select_first("html")
+                    .unwrap()
+                    .as_node()
+                    .clone(),
+            );
 
-        //   while (node) {
-        //     var matchString = node.className + " " + node.id;
+            while let Some(node_ref) = node {
+                let node_elem = node_ref.as_element().unwrap();
+                let node_name: &str = node_elem.name.local.as_ref();
+                let match_string = {
+                    let node_attrs = node_elem.attributes.borrow();
+                    node_attrs.get("class").unwrap_or("").to_string()
+                        + " "
+                        + node_attrs.get("id").unwrap_or("")
+                };
+                if !Self::is_probably_visible(&node_ref) {
+                    node = Self::remove_and_get_next(node_ref);
+                    continue;
+                }
 
-        //     if (!this._isProbablyVisible(node)) {
-        //       this.log("Removing hidden node - " + matchString);
-        //       node = this._removeAndGetNext(node);
-        //       continue;
-        //     }
+                if self.check_byline(&node_ref, &match_string) {
+                    node = Self::remove_and_get_next(node_ref);
+                    continue;
+                }
 
-        //     // Check to see if this node is a byline, and remove it if it is.
-        //     if (this._checkByline(node, matchString)) {
-        //       node = this._removeAndGetNext(node);
-        //       continue;
-        //     }
+                if strip_unlikely_candidates {
+                    if regexes::is_match_unlikely(&match_string)
+                        && !regexes::is_match_ok_maybe(&match_string)
+                        && !Self::has_ancestor_tag(&node_ref, "table", None, None)
+                        && node_name != "body"
+                        && node_name != "a"
+                    {
+                        node = Self::remove_and_get_next(node_ref);
+                        continue;
+                    }
 
-        //     // Remove unlikely candidates
-        //     if (stripUnlikelyCandidates) {
-        //       if (this.REGEXPS.unlikelyCandidates.test(matchString) &&
-        //           !this.REGEXPS.okMaybeItsACandidate.test(matchString) &&
-        //           !this._hasAncestorTag(node, "table") &&
-        //           node.tagName !== "BODY" &&
-        //           node.tagName !== "A") {
-        //         this.log("Removing unlikely candidate - " + matchString);
-        //         node = this._removeAndGetNext(node);
-        //         continue;
-        //       }
+                    let is_complementary = {
+                        let node_attrs = node_elem.attributes.borrow();
+                        node_attrs.get("role") == Some("complementary")
+                    };
+                    if is_complementary {
+                        node = Self::remove_and_get_next(node_ref);
+                        continue;
+                    }
+                }
 
-        //       if (node.getAttribute("role") == "complementary") {
-        //         this.log("Removing complementary content - " + matchString);
-        //         node = this._removeAndGetNext(node);
-        //         continue;
-        //       }
-        //     }
+                match node_name {
+                    "div" | "section" | "header" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                        if Self::is_element_without_content(&node_ref) {
+                            node = Self::remove_and_get_next(node_ref);
+                            continue;
+                        }
+                    }
+                    _ => (),
+                }
+                if !DEFAULT_TAGS_TO_SCORE.contains(&node_name) {
+                    elements_to_score.push(node_ref.clone());
+                }
+                if node_name == "div" {
+                    let mut p: Option<NodeRef> = None;
+                    let mut child_node = node_ref.first_child();
+                    while let Some(child_node_ref) = child_node {
+                        let next_sibling = child_node_ref.next_sibling();
+                        if Self::is_phrasing_content(&child_node_ref) {
+                            if let Some(ref p_node) = p {
+                                p_node.append(child_node_ref);
+                            } else if !Self::is_whitespace(&child_node_ref) {
+                                let new_p_node = NodeRef::new_element(
+                                    QualName::new(
+                                        None,
+                                        Namespace::from(HTML_NS),
+                                        LocalName::from("p"),
+                                    ),
+                                    BTreeMap::new(),
+                                );
+                                child_node_ref.insert_before(new_p_node);
+                                p = child_node_ref.previous_sibling();
+                                // Append will implicitly detach the child_node_ref
+                                p.as_mut().unwrap().append(child_node_ref);
+                            }
+                        } else if let Some(ref p_node) = p {
+                            while let Some(last_child) = p_node.last_child() {
+                                if Self::is_whitespace(&last_child) {
+                                    last_child.detach();
+                                } else {
+                                    break;
+                                }
+                            }
+                            p = None;
+                        }
+                        child_node = next_sibling;
+                    }
+                    if Self::has_single_tag_inside_element(&node_ref, "p")
+                        && Self::get_link_density(&node_ref) < 0.25
+                    {
+                        // WARN: This assumes `next_element` returns an element node.
+                        let new_node = Self::next_element(node_ref.first_child(), true).unwrap();
+                        elements_to_score.push(new_node.clone());
+                        node_ref.insert_before(new_node);
+                        let new_node = node_ref.previous_sibling();
+                        node_ref.detach();
+                        node = new_node;
+                        elements_to_score.push(node.clone().unwrap());
+                    } else if !Self::has_child_block_element(&node_ref) {
+                        node = Some(Self::set_node_tag(&node_ref, "p"));
+                        elements_to_score.push(node.clone().unwrap());
+                    }
+                }
+                node = Self::get_next_node(&node_ref, false);
+            }
 
-        //     // Remove DIV, SECTION, and HEADER nodes without any content(e.g. text, image, video, or iframe).
-        //     if ((node.tagName === "DIV" || node.tagName === "SECTION" || node.tagName === "HEADER" ||
-        //          node.tagName === "H1" || node.tagName === "H2" || node.tagName === "H3" ||
-        //          node.tagName === "H4" || node.tagName === "H5" || node.tagName === "H6") &&
-        //         this._isElementWithoutContent(node)) {
-        //       node = this._removeAndGetNext(node);
-        //       continue;
-        //     }
+            let mut candidates: Vec<NodeRef> = Vec::new();
+            elements_to_score
+                .iter()
+                .filter(|node_ref| {
+                    let parent = node_ref.parent();
+                    parent.is_some() && parent.unwrap().as_element().is_some()
+                })
+                .map(|node_ref| (node_ref, Self::get_inner_text(&node_ref, None)))
+                .filter(|(_, inner_text)| inner_text.len() >= 25)
+                .map(|(node_ref, inner_text)| {
+                    (inner_text, Self::get_node_ancestors(&node_ref, Some(3)))
+                })
+                .filter(|(_, ancestors)| ancestors.len() != 0)
+                .for_each(|(inner_text, ancestors)| {
+                    let mut content_score = 0;
+                    content_score += 1;
+                    content_score += inner_text.split(",").count();
+                    content_score += (3).min(inner_text.len() / 100);
+                    ancestors
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(_, node)| {
+                            node.parent().is_some() && node.parent().unwrap().as_element().is_some()
+                        })
+                        .for_each(|(level, mut ancestor)| {
+                            let has_readability = {
+                                let ancestor_attrs =
+                                    ancestor.as_element().unwrap().attributes.borrow();
+                                ancestor_attrs.contains(READABILITY_SCORE)
+                            };
+                            if !has_readability {
+                                Self::initialize_node(&mut ancestor);
+                                candidates.push(ancestor.clone());
+                            }
 
-        //     if (this.DEFAULT_TAGS_TO_SCORE.indexOf(node.tagName) !== -1) {
-        //       elementsToScore.push(node);
-        //     }
+                            let score_divider = if level == 0 {
+                                1.0
+                            } else if level == 1 {
+                                2.0
+                            } else {
+                                level as f32 * 3.0
+                            };
+                            let mut ancestor_attrs =
+                                ancestor.as_element().unwrap().attributes.borrow_mut();
+                            if let Some(readability_score) =
+                                ancestor_attrs.get_mut(READABILITY_SCORE)
+                            {
+                                *readability_score = (readability_score.parse::<f32>().unwrap()
+                                    + (content_score as f32 / score_divider))
+                                    .to_string();
+                            }
+                        });
+                });
 
-        //     // Turn all divs that don't have children block level elements into p's
-        //     if (node.tagName === "DIV") {
-        //       // Put phrasing content into paragraphs.
-        //       var p = null;
-        //       var childNode = node.firstChild;
-        //       while (childNode) {
-        //         var nextSibling = childNode.nextSibling;
-        //         if (this._isPhrasingContent(childNode)) {
-        //           if (p !== null) {
-        //             p.appendChild(childNode);
-        //           } else if (!this._isWhitespace(childNode)) {
-        //             p = doc.createElement("p");
-        //             node.replaceChild(p, childNode);
-        //             p.appendChild(childNode);
-        //           }
-        //         } else if (p !== null) {
-        //           while (p.lastChild && this._isWhitespace(p.lastChild)) {
-        //             p.removeChild(p.lastChild);
-        //           }
-        //           p = null;
-        //         }
-        //         childNode = nextSibling;
-        //       }
+            let mut top_candidates: Vec<NodeRef> = Vec::new();
+            for candidate in candidates {
+                let mut candidate_score = 0.0;
+                {
+                    let mut candidate_attr =
+                        candidate.as_element().unwrap().attributes.borrow_mut();
+                    if let Some(readability_score) = candidate_attr.get_mut(READABILITY_SCORE) {
+                        candidate_score = readability_score.parse::<f32>().unwrap()
+                            * (1.0 - Self::get_link_density(&candidate));
+                        *readability_score = candidate_score.to_string();
+                    }
+                }
+                let nb_top_candidates = 5;
+                for i in 0..nb_top_candidates {
+                    let top_candidate = top_candidates.get(i);
+                    let top_candidate_score = top_candidate
+                        .as_ref()
+                        .map(|node_ref| node_ref.as_element().unwrap().attributes.borrow())
+                        .map(|attrs| {
+                            attrs
+                                .get(READABILITY_SCORE)
+                                .unwrap_or("0")
+                                .parse::<f32>()
+                                .unwrap()
+                        });
+                    if top_candidate.is_none() || candidate_score > top_candidate_score.unwrap() {
+                        top_candidates.splice(i..i, vec![candidate].into_iter());
+                        if top_candidates.len() > nb_top_candidates {
+                            top_candidates.pop();
+                        }
+                        break;
+                    }
+                }
+            }
 
-        //       // Sites like http://mobile.slate.com encloses each paragraph with a DIV
-        //       // element. DIVs with only a P element inside and no text content can be
-        //       // safely converted into plain P elements to avoid confusing the scoring
-        //       // algorithm with DIVs with are, in practice, paragraphs.
-        //       if (this._hasSingleTagInsideElement(node, "P") && this._getLinkDensity(node) < 0.25) {
-        //         var newNode = node.children[0];
-        //         node.parentNode.replaceChild(newNode, node);
-        //         node = newNode;
-        //         elementsToScore.push(node);
-        //       } else if (!this._hasChildBlockElement(node)) {
-        //         node = this._setNodeTag(node, "P");
-        //         elementsToScore.push(node);
-        //       }
-        //     }
-        //     node = this._getNextNode(node);
-        //   }
+            let possible_top_candidate = top_candidates.get(0);
+            let mut top_candidate;
+            let mut needed_to_create_top_candidate = false;
+            let mut parent_of_top_candidate: NodeRef;
 
-        //   /**
-        //    * Loop through all paragraphs, and assign a score to them based on how content-y they look.
-        //    * Then add their score to their parent node.
-        //    *
-        //    * A score is determined by things like number of commas, class names, etc. Maybe eventually link density.
-        //   **/
-        //   var candidates = [];
-        //   this._forEachNode(elementsToScore, function(elementToScore) {
-        //     if (!elementToScore.parentNode || typeof(elementToScore.parentNode.tagName) === "undefined")
-        //       return;
+            if possible_top_candidate.is_none()
+                || possible_top_candidate
+                    .map(|node| &node.as_element().unwrap().name.local)
+                    .as_ref()
+                    .unwrap()
+                    == &"body"
+            {
+                top_candidate = NodeRef::new_element(
+                    QualName::new(None, Namespace::from(HTML_NS), LocalName::from("div")),
+                    BTreeMap::new(),
+                );
+                needed_to_create_top_candidate = true;
+                page.as_node().children().for_each(|child_node| {
+                    top_candidate.append(child_node);
+                });
+                page.as_node().append(top_candidate.clone());
+                Self::initialize_node(&mut top_candidate);
+            } else {
+                let alternative_candidate_ancestors: Vec<Vec<NodeRef>>;
+                top_candidate = top_candidates.get(0).unwrap().clone();
+                let top_candidate_score = {
+                    let top_candidate_node_attrs =
+                        top_candidate.as_element().unwrap().attributes.borrow();
+                    top_candidate_node_attrs
+                        .get(READABILITY_SCORE)
+                        .unwrap()
+                        .parse::<f32>()
+                        .unwrap()
+                };
 
-        //     // If this paragraph is less than 25 characters, don't even count it.
-        //     var innerText = this._getInnerText(elementToScore);
-        //     if (innerText.length < 25)
-        //       return;
+                alternative_candidate_ancestors = top_candidates
+                    .iter()
+                    .skip(1)
+                    .filter(|top_candidate_node| {
+                        let candidate_node_score = {
+                            let top_candidate_node_attrs =
+                                top_candidate_node.as_element().unwrap().attributes.borrow();
+                            top_candidate_node_attrs
+                                .get(READABILITY_SCORE)
+                                .unwrap()
+                                .parse::<f32>()
+                                .unwrap()
+                        };
+                        (candidate_node_score / top_candidate_score) >= 0.75
+                    })
+                    .map(|node| Self::get_node_ancestors(&node, None))
+                    .collect();
 
-        //     // Exclude nodes with no ancestor.
-        //     var ancestors = this._getNodeAncestors(elementToScore, 3);
-        //     if (ancestors.length === 0)
-        //       return;
+                let minimum_top_candidates = 3;
+                if alternative_candidate_ancestors.len() >= minimum_top_candidates {
+                    parent_of_top_candidate = top_candidate.parent().unwrap();
+                    while &parent_of_top_candidate.as_element().unwrap().name.local != "body" {
+                        let mut lists_containing_this_ancestor = alternative_candidate_ancestors
+                            .iter()
+                            .filter(|node_vec| node_vec.contains(&parent_of_top_candidate))
+                            .count();
+                        lists_containing_this_ancestor =
+                            lists_containing_this_ancestor.min(minimum_top_candidates);
+                        if lists_containing_this_ancestor >= minimum_top_candidates {
+                            top_candidate = parent_of_top_candidate;
+                            break;
+                        }
+                        parent_of_top_candidate = parent_of_top_candidate.parent().unwrap();
+                    }
+                }
 
-        //     var contentScore = 0;
+                let top_candidate_readability = {
+                    let top_candidate_attrs =
+                        top_candidate.as_element().unwrap().attributes.borrow();
+                    top_candidate_attrs
+                        .get(READABILITY_SCORE)
+                        .map(|x| x.to_owned())
+                };
 
-        //     // Add a point for the paragraph itself as a base.
-        //     contentScore += 1;
+                if top_candidate_readability.is_none() {
+                    Self::initialize_node(&mut top_candidate);
+                }
+                parent_of_top_candidate = top_candidate.parent().unwrap();
 
-        //     // Add points for any commas within this paragraph.
-        //     contentScore += innerText.split(",").length;
+                let mut last_score = {
+                    let top_candidate_node_attrs =
+                        top_candidate.as_element().unwrap().attributes.borrow();
+                    top_candidate_node_attrs
+                        .get(READABILITY_SCORE)
+                        .unwrap()
+                        .parse::<f32>()
+                        .unwrap()
+                };
+                let score_threshold = last_score / 3.0;
+                while parent_of_top_candidate
+                    .as_element()
+                    .map(|elem| elem.name.local.as_ref())
+                    .unwrap()
+                    != "body"
+                {
+                    let parent_readability = {
+                        let parent_attrs = parent_of_top_candidate
+                            .as_element()
+                            .unwrap()
+                            .attributes
+                            .borrow();
+                        parent_attrs
+                            .get(READABILITY_SCORE)
+                            .map(|score| score.parse::<f32>().unwrap())
+                    };
+                    if parent_readability.is_none() {
+                        parent_of_top_candidate = parent_of_top_candidate.parent().unwrap();
+                        continue;
+                    }
+                    if parent_readability.as_ref().unwrap() < &score_threshold {
+                        break;
+                    }
+                    if parent_readability.as_ref().unwrap() > &last_score {
+                        top_candidate = parent_of_top_candidate;
+                        break;
+                    }
+                    last_score = parent_readability.unwrap();
+                    parent_of_top_candidate = parent_of_top_candidate.parent().unwrap();
+                }
 
-        //     // For every 100 characters in this paragraph, add another point. Up to 3 points.
-        //     contentScore += Math.min(Math.floor(innerText.length / 100), 3);
+                parent_of_top_candidate = top_candidate.parent().unwrap();
+                while &parent_of_top_candidate.as_element().unwrap().name.local != "body"
+                    && parent_of_top_candidate.children().count() == 1
+                {
+                    top_candidate = parent_of_top_candidate;
+                    parent_of_top_candidate = top_candidate.parent().unwrap();
+                }
+                let top_candidate_readability = {
+                    let top_candidate_attrs =
+                        top_candidate.as_element().unwrap().attributes.borrow();
+                    top_candidate_attrs
+                        .get(READABILITY_SCORE)
+                        .map(|score| score.to_string())
+                };
+                if top_candidate_readability.is_none() {
+                    Self::initialize_node(&mut top_candidate);
+                }
+            }
+            let mut article_content = NodeRef::new_element(
+                QualName::new(None, Namespace::from(HTML_NS), LocalName::from("div")),
+                BTreeMap::new(),
+            );
+            let top_candidate_score = {
+                let top_candidate_attrs = top_candidate.as_element().unwrap().attributes.borrow();
+                top_candidate_attrs
+                    .get(READABILITY_SCORE)
+                    .map(|score| score.parse::<f32>().unwrap())
+                    .unwrap()
+            };
 
-        //     // Initialize and score ancestors.
-        //     this._forEachNode(ancestors, function(ancestor, level) {
-        //       if (!ancestor.tagName || !ancestor.parentNode || typeof(ancestor.parentNode.tagName) === "undefined")
-        //         return;
+            let sibling_score_threshold = (10.0_f32).max(top_candidate_score * 0.2);
+            parent_of_top_candidate = top_candidate.parent().unwrap();
+            let siblings = parent_of_top_candidate.children();
 
-        //       if (typeof(ancestor.readability) === "undefined") {
-        //         this._initializeNode(ancestor);
-        //         candidates.push(ancestor);
-        //       }
+            let (top_candidate_class, top_candidate_score) = {
+                let top_candidate_attrs = top_candidate.as_element().unwrap().attributes.borrow();
+                let class = top_candidate_attrs
+                    .get("class")
+                    .map(|class| class.to_string())
+                    .unwrap_or("".to_string());
+                let score = top_candidate_attrs
+                    .get(READABILITY_SCORE)
+                    .map(|score| score.parse::<f32>().unwrap())
+                    .unwrap();
+                (class, score)
+            };
+            for sibling in siblings {
+                let mut append = false;
+                if sibling == top_candidate {
+                    append = true;
+                } else {
+                    let mut content_bonus = 0.0;
+                    let sibling_attrs = sibling.as_element().unwrap().attributes.borrow();
 
-        //       // Node score divider:
-        //       // - parent:             1 (no division)
-        //       // - grandparent:        2
-        //       // - great grandparent+: ancestor level * 3
-        //       if (level === 0)
-        //         var scoreDivider = 1;
-        //       else if (level === 1)
-        //         scoreDivider = 2;
-        //       else
-        //         scoreDivider = level * 3;
-        //       ancestor.readability.contentScore += contentScore / scoreDivider;
-        //     });
-        //   });
+                    let sibling_class = sibling_attrs
+                        .get("class")
+                        .map(|class| class.to_string())
+                        .unwrap_or("".to_string());
+                    let sibling_score = sibling_attrs
+                        .get(READABILITY_SCORE)
+                        .map(|score| score.parse::<f32>().unwrap());
 
-        //// I think the section here could be most explicitly written using a call to sort and then accessing
-        //// the first 5 elements. Alternatively, it can still just as well be done with a reduce/fold function
-        //   // After we've calculated scores, loop through all of the possible
-        //   // candidate nodes we found and find the one with the highest score.
-        //   var topCandidates = [];
-        //   for (var c = 0, cl = candidates.length; c < cl; c += 1) {
-        //     var candidate = candidates[c];
+                    if sibling_class == top_candidate_class && !top_candidate_class.is_empty() {
+                        content_bonus += top_candidate_score * 0.2;
+                    }
 
-        //     // Scale the final candidates score based on link density. Good content
-        //     // should have a relatively small link density (5% or less) and be mostly
-        //     // unaffected by this operation.
-        //     var candidateScore = candidate.readability.contentScore * (1 - this._getLinkDensity(candidate));
-        //     candidate.readability.contentScore = candidateScore;
+                    if sibling_score.is_some()
+                        && (sibling_score.unwrap() + content_bonus) >= sibling_score_threshold
+                    {
+                        append = true;
+                    } else if sibling.as_element().map(|elem| elem.name.local.as_ref()) == Some("p")
+                    {
+                        let link_density = Self::get_link_density(&sibling);
+                        let node_content = Self::get_inner_text(&sibling, None);
+                        let node_length = node_content.len();
+                        if node_length > 80 && link_density < 0.25 {
+                            append = true;
+                        } else if node_length < 80
+                            && node_length > 0
+                            && link_density == 0.0
+                            && !regexes::is_match_node_content(&node_content)
+                        {
+                            append = true;
+                        }
+                    }
+                }
+                if append {
+                    let new_article_child = if !ALTER_TO_DIV_EXCEPTIONS.contains(
+                        &sibling
+                            .as_element()
+                            .map(|elem| elem.name.local.as_ref())
+                            .unwrap(),
+                    ) {
+                        Self::set_node_tag(&sibling, "div")
+                    } else {
+                        sibling
+                    };
+                    article_content.append(new_article_child);
+                }
+            }
+            self.prep_article(&mut article_content);
+            if needed_to_create_top_candidate {
+                let mut top_candidate_attrs =
+                    top_candidate.as_element().unwrap().attributes.borrow_mut();
+                top_candidate_attrs.insert("id", "readability-page-1".to_string());
+                top_candidate_attrs.insert("class", "page".to_string());
+            } else {
+                let div = NodeRef::new_element(
+                    QualName::new(None, Namespace::from(HTML_NS), LocalName::from("div")),
+                    BTreeMap::new(),
+                );
+                {
+                    let mut div_attrs = div.as_element().unwrap().attributes.borrow_mut();
+                    div_attrs.insert("id", "readability-page-1".to_string());
+                    div_attrs.insert("class", "page".to_string());
+                }
+                for child in article_content.children() {
+                    div.append(child);
+                }
+                article_content.append(div);
+            }
 
-        //     this.log("Candidate:", candidate, "with score " + candidateScore);
-
-        //     for (var t = 0; t < this._nbTopCandidates; t++) {
-        //       var aTopCandidate = topCandidates[t];
-
-        //       if (!aTopCandidate || candidateScore > aTopCandidate.readability.contentScore) {
-        //         topCandidates.splice(t, 0, candidate);
-        //         if (topCandidates.length > this._nbTopCandidates)
-        //           topCandidates.pop();
-        //         break;
-        //       }
-        //     }
-        //   }
-
-        //   var topCandidate = topCandidates[0] || null;
-        //   var neededToCreateTopCandidate = false;
-        //   var parentOfTopCandidate;
-
-        //   // If we still have no top candidate, just use the body as a last resort.
-        //   // We also have to copy the body node so it is something we can modify.
-        //   if (topCandidate === null || topCandidate.tagName === "BODY") {
-        //     // Move all of the page's children into topCandidate
-        //     topCandidate = doc.createElement("DIV");
-        //     neededToCreateTopCandidate = true;
-        //     // Move everything (not just elements, also text nodes etc.) into the container
-        //     // so we even include text directly in the body:
-        //     var kids = page.childNodes;
-        //     while (kids.length) {
-        //       this.log("Moving child out:", kids[0]);
-        //       topCandidate.appendChild(kids[0]);
-        //     }
-
-        //     page.appendChild(topCandidate);
-
-        //     this._initializeNode(topCandidate);
-        //   } else if (topCandidate) {
-        //     // Find a better top candidate node if it contains (at least three) nodes which belong to `topCandidates` array
-        //     // and whose scores are quite closed with current `topCandidate` node.
-        //     var alternativeCandidateAncestors = [];
-        //     for (var i = 1; i < topCandidates.length; i++) {
-        //       if (topCandidates[i].readability.contentScore / topCandidate.readability.contentScore >= 0.75) {
-        //         alternativeCandidateAncestors.push(this._getNodeAncestors(topCandidates[i]));
-        //       }
-        //     }
-        //     var MINIMUM_TOPCANDIDATES = 3;
-        //     if (alternativeCandidateAncestors.length >= MINIMUM_TOPCANDIDATES) {
-        //       parentOfTopCandidate = topCandidate.parentNode;
-        //       while (parentOfTopCandidate.tagName !== "BODY") {
-        //         var listsContainingThisAncestor = 0;
-        //         for (var ancestorIndex = 0; ancestorIndex < alternativeCandidateAncestors.length && listsContainingThisAncestor < MINIMUM_TOPCANDIDATES; ancestorIndex++) {
-        //           listsContainingThisAncestor += Number(alternativeCandidateAncestors[ancestorIndex].includes(parentOfTopCandidate));
-        //         }
-        //         if (listsContainingThisAncestor >= MINIMUM_TOPCANDIDATES) {
-        //           topCandidate = parentOfTopCandidate;
-        //           break;
-        //         }
-        //         parentOfTopCandidate = parentOfTopCandidate.parentNode;
-        //       }
-        //     }
-        //     if (!topCandidate.readability) {
-        //       this._initializeNode(topCandidate);
-        //     }
-
-        //     // Because of our bonus system, parents of candidates might have scores
-        //     // themselves. They get half of the node. There won't be nodes with higher
-        //     // scores than our topCandidate, but if we see the score going *up* in the first
-        //     // few steps up the tree, that's a decent sign that there might be more content
-        //     // lurking in other places that we want to unify in. The sibling stuff
-        //     // below does some of that - but only if we've looked high enough up the DOM
-        //     // tree.
-        //     parentOfTopCandidate = topCandidate.parentNode;
-        //     var lastScore = topCandidate.readability.contentScore;
-        //     // The scores shouldn't get too low.
-        //     var scoreThreshold = lastScore / 3;
-        //     while (parentOfTopCandidate.tagName !== "BODY") {
-        //       if (!parentOfTopCandidate.readability) {
-        //         parentOfTopCandidate = parentOfTopCandidate.parentNode;
-        //         continue;
-        //       }
-        //       var parentScore = parentOfTopCandidate.readability.contentScore;
-        //       if (parentScore < scoreThreshold)
-        //         break;
-        //       if (parentScore > lastScore) {
-        //         // Alright! We found a better parent to use.
-        //         topCandidate = parentOfTopCandidate;
-        //         break;
-        //       }
-        //       lastScore = parentOfTopCandidate.readability.contentScore;
-        //       parentOfTopCandidate = parentOfTopCandidate.parentNode;
-        //     }
-
-        //     // If the top candidate is the only child, use parent instead. This will help sibling
-        //     // joining logic when adjacent content is actually located in parent's sibling node.
-        //     parentOfTopCandidate = topCandidate.parentNode;
-        //     while (parentOfTopCandidate.tagName != "BODY" && parentOfTopCandidate.children.length == 1) {
-        //       topCandidate = parentOfTopCandidate;
-        //       parentOfTopCandidate = topCandidate.parentNode;
-        //     }
-        //     if (!topCandidate.readability) {
-        //       this._initializeNode(topCandidate);
-        //     }
-        //   }
-
-        //   // Now that we have the top candidate, look through its siblings for content
-        //   // that might also be related. Things like preambles, content split by ads
-        //   // that we removed, etc.
-        //   var articleContent = doc.createElement("DIV");
-        //   if (isPaging)
-        //     articleContent.id = "readability-content";
-
-        //   var siblingScoreThreshold = Math.max(10, topCandidate.readability.contentScore * 0.2);
-        //   // Keep potential top candidate's parent node to try to get text direction of it later.
-        //   parentOfTopCandidate = topCandidate.parentNode;
-        //   var siblings = parentOfTopCandidate.children;
-
-        //   for (var s = 0, sl = siblings.length; s < sl; s++) {
-        //     var sibling = siblings[s];
-        //     var append = false;
-
-        //     this.log("Looking at sibling node:", sibling, sibling.readability ? ("with score " + sibling.readability.contentScore) : "");
-        //     this.log("Sibling has score", sibling.readability ? sibling.readability.contentScore : "Unknown");
-
-        //     if (sibling === topCandidate) {
-        //       append = true;
-        //     } else {
-        //       var contentBonus = 0;
-
-        //       // Give a bonus if sibling nodes and top candidates have the example same classname
-        //       if (sibling.className === topCandidate.className && topCandidate.className !== "")
-        //         contentBonus += topCandidate.readability.contentScore * 0.2;
-
-        //       if (sibling.readability &&
-        //           ((sibling.readability.contentScore + contentBonus) >= siblingScoreThreshold)) {
-        //         append = true;
-        //       } else if (sibling.nodeName === "P") {
-        //         var linkDensity = this._getLinkDensity(sibling);
-        //         var nodeContent = this._getInnerText(sibling);
-        //         var nodeLength = nodeContent.length;
-
-        //         if (nodeLength > 80 && linkDensity < 0.25) {
-        //           append = true;
-        //         } else if (nodeLength < 80 && nodeLength > 0 && linkDensity === 0 &&
-        //                    nodeContent.search(/\.( |$)/) !== -1) {
-        //           append = true;
-        //         }
-        //       }
-        //     }
-
-        //     if (append) {
-        //       this.log("Appending node:", sibling);
-
-        //       if (this.ALTER_TO_DIV_EXCEPTIONS.indexOf(sibling.nodeName) === -1) {
-        //         // We have a node that isn't a common block level element, like a form or td tag.
-        //         // Turn it into a div so it doesn't get filtered out later by accident.
-        //         this.log("Altering sibling:", sibling, "to div.");
-
-        //         sibling = this._setNodeTag(sibling, "DIV");
-        //       }
-
-        //       articleContent.appendChild(sibling);
-        //       // siblings is a reference to the children array, and
-        //       // sibling is removed from the array when we call appendChild().
-        //       // As a result, we must revisit this index since the nodes
-        //       // have been shifted.
-        //       s -= 1;
-        //       sl -= 1;
-        //     }
-        //   }
-
-        //   if (this._debug)
-        //     this.log("Article content pre-prep: " + articleContent.innerHTML);
-        //   // So we have all of the content that we need. Now we clean it up for presentation.
-        //   this._prepArticle(articleContent);
-        //   if (this._debug)
-        //     this.log("Article content post-prep: " + articleContent.innerHTML);
-
-        //   if (neededToCreateTopCandidate) {
-        //     // We already created a fake div thing, and there wouldn't have been any siblings left
-        //     // for the previous loop, so there's no point trying to create a new div, and then
-        //     // move all the children over. Just assign IDs and class names here. No need to append
-        //     // because that already happened anyway.
-        //     topCandidate.id = "readability-page-1";
-        //     topCandidate.className = "page";
-        //   } else {
-        //     var div = doc.createElement("DIV");
-        //     div.id = "readability-page-1";
-        //     div.className = "page";
-        //     var children = articleContent.childNodes;
-        //     while (children.length) {
-        //       div.appendChild(children[0]);
-        //     }
-        //     articleContent.appendChild(div);
-        //   }
-
-        //   if (this._debug)
-        //     this.log("Article content after paging: " + articleContent.innerHTML);
-
-        //   var parseSuccessful = true;
-
-        //   // Now that we've gone through the full algorithm, check to see if
-        //   // we got any meaningful content. If we didn't, we may need to re-run
-        //   // grabArticle with different flags set. This gives us a higher likelihood of
-        //   // finding the content, and the sieve approach gives us a higher likelihood of
-        //   // finding the -right- content.
-        //   var textLength = this._getInnerText(articleContent, true).length;
-        //   if (textLength < this._charThreshold) {
-        //     parseSuccessful = false;
-        //     page.innerHTML = pageCacheHtml;
-
-        //     if (this._flagIsActive(this.FLAG_STRIP_UNLIKELYS)) {
-        //       this._removeFlag(this.FLAG_STRIP_UNLIKELYS);
-        //       this._attempts.push({articleContent: articleContent, textLength: textLength});
-        //     } else if (this._flagIsActive(this.FLAG_WEIGHT_CLASSES)) {
-        //       this._removeFlag(this.FLAG_WEIGHT_CLASSES);
-        //       this._attempts.push({articleContent: articleContent, textLength: textLength});
-        //     } else if (this._flagIsActive(this.FLAG_CLEAN_CONDITIONALLY)) {
-        //       this._removeFlag(this.FLAG_CLEAN_CONDITIONALLY);
-        //       this._attempts.push({articleContent: articleContent, textLength: textLength});
-        //     } else {
-        //       this._attempts.push({articleContent: articleContent, textLength: textLength});
-        //       // No luck after removing flags, just return the longest text we found during the different loops
-        //       this._attempts.sort(function (a, b) {
-        //         return b.textLength - a.textLength;
-        //       });
-
-        //       // But first check if we actually have something
-        //       if (!this._attempts[0].textLength) {
-        //         return null;
-        //       }
-
-        //       articleContent = this._attempts[0].articleContent;
-        //       parseSuccessful = true;
-        //     }
-        //   }
-
-        //   if (parseSuccessful) {
-        //     // Find out text direction from ancestors of final top candidate.
-        //     var ancestors = [parentOfTopCandidate, topCandidate].concat(this._getNodeAncestors(parentOfTopCandidate));
-        //     this._someNode(ancestors, function(ancestor) {
-        //       if (!ancestor.tagName)
-        //         return false;
-        //       var articleDir = ancestor.getAttribute("dir");
-        //       if (articleDir) {
-        //         this._articleDir = articleDir;
-        //         return true;
-        //       }
-        //       return false;
-        //     });
-        //     return articleContent;
-        //   }
-        // }
+            let text_length = Self::get_inner_text(&article_content, Some(true)).len();
+            let mut parse_successful = true;
+            if text_length < 500 {
+                // TODO Add flag checks
+                parse_successful = false;
+                println!("I haz a smol content. Plz run me again");
+            }
+            if parse_successful {
+                let parent_ancestors = Self::get_node_ancestors(&parent_of_top_candidate, None);
+                let ancestors = vec![
+                    vec![parent_of_top_candidate, top_candidate],
+                    parent_ancestors,
+                ]
+                .concat();
+                ancestors.iter().any(|node| {
+                    let node_elem = node.as_element();
+                    if node_elem.is_none() {
+                        return false;
+                    }
+                    let node_attrs = node_elem.unwrap().attributes.borrow();
+                    if let Some(dir_attr) = node_attrs.get("dir") {
+                        self.article_dir = Some(dir_attr.to_string());
+                        return true;
+                    }
+                    false
+                });
+                self.article_node = Some(article_content);
+                return;
+            }
+            // TODO: Remove this
+            break;
+        }
     }
 }
 
@@ -1744,10 +1830,11 @@ mod test {
         let target_children_count = target.as_node().children().count();
 
         assert_eq!("div", &target.name.local);
-        Readability::set_node_tag(&target.as_node(), "section");
+        let new_node = Readability::set_node_tag(target.as_node(), "section");
 
         assert_eq!(children_count, doc.root_node.children().count());
         let target = doc.root_node.select_first("#target").unwrap();
+        assert_eq!(&new_node, target.as_node());
         assert_eq!("section", &target.name.local);
         assert_eq!(target_children_count, target.as_node().children().count());
 
