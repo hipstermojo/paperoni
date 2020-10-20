@@ -89,9 +89,45 @@ pub fn is_match_src_regex(match_str: &str) -> bool {
     SRC_REGEX.is_match(match_str)
 }
 
+pub fn is_match_name_pattern(match_str: &str) -> bool {
+    lazy_static! {
+        static ref NAME_PATTERN_REGEX: Regex = Regex::new(r"(?i)\s*(?:(dc|dcterm|og|twitter|weibo:(article|webpage))\s*[\.:]\s*)?(author|creator|description|title|site_name)\s*$").unwrap();
+    }
+    NAME_PATTERN_REGEX.is_match(match_str)
+}
+
+pub fn is_match_title_separator(match_str: &str) -> bool {
+    lazy_static! {
+        static ref TITLE_SEPARATOR_REGEX: Regex = Regex::new(r" [\|\-\\/>»] ").unwrap();
+    }
+    TITLE_SEPARATOR_REGEX.is_match(match_str)
+}
+
+pub fn is_match_has_title_separator(match_str: &str) -> bool {
+    lazy_static! {
+        static ref HAS_TITLE_SEPARATOR_REGEX: Regex = Regex::new(r" [\\/>»] ").unwrap();
+    }
+    HAS_TITLE_SEPARATOR_REGEX.is_match(match_str)
+}
+
 lazy_static! {
     pub static ref NORMALIZE_REGEX: Regex = Regex::new(r"\s{2,}").unwrap();
     pub static ref B64_DATA_URL_REGEX: Regex =
         Regex::new(r"(?i)^data:\s*([^\s;,]+)\s*;\s*base64\s*").unwrap();
     pub static ref BASE64_REGEX: Regex = Regex::new(r"(?i)base64\s*").unwrap();
+    pub static ref PROPERTY_REGEX: Regex = Regex::new(
+        r"(?i)\s*(dc|dcterm|og|twitter)\s*:\s*(author|creator|description|title|site_name)\s*"
+    )
+    .unwrap();
+    pub static ref REPLACE_WHITESPACE_REGEX: Regex = Regex::new(r"\s").unwrap();
+    pub static ref REPLACE_DOT_REGEX: Regex = Regex::new(r"\.").unwrap();
+    pub static ref REPLACE_HTML_ESCAPE_REGEX: Regex =
+        Regex::new("&(quot|amp|apos|lt|gt);").unwrap();
+    pub static ref REPLACE_HEX_REGEX: Regex =
+        Regex::new(r"(?i)&#(?:x([0-9a-z]{1,4})|([0-9]{1,4}));").unwrap();
+    pub static ref REPLACE_START_SEPARATOR_REGEX: Regex =
+        Regex::new(r"(?i)(?P<start>.*)[\|\-\\/>»] .*").unwrap();
+    pub static ref REPLACE_END_SEPARATOR_REGEX: Regex =
+        Regex::new(r"(?i)[^\|\-\\/>»]*[\|\-\\/>»](?P<end>.*)").unwrap();
+    pub static ref REPLACE_MULTI_SEPARATOR_REGEX: Regex = Regex::new(r"[\|\-\\/>»]+").unwrap();
 }

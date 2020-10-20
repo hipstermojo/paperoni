@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
-
-use crate::extractor::MetaAttr;
+use std::str::FromStr;
 
 use html5ever::{LocalName, Namespace, QualName};
 use kuchiki::{
@@ -73,7 +72,8 @@ impl Readability {
         self.unwrap_no_script_tags();
         self.remove_scripts();
         self.prep_document();
-        // TODO: Add implementation for get_article_metadata
+        let meta_data = self.get_article_metadata();
+        self.article_title = meta_data.title.clone();
         self.grab_article();
     }
 
@@ -404,8 +404,205 @@ impl Readability {
     }
 
     ///Attempts to get excerpt and byline metadata for the article. @return Object with optional "excerpt" and "byline" properties
-    fn get_article_metadata(&self) -> MetaAttr {
-        unimplemented!()
+    fn get_article_metadata(&self) -> MetaData {
+        let mut values: HashMap<String, String> = HashMap::new();
+        let mut meta_data = MetaData::new();
+        if let Ok(meta_elems) = self.root_node.select("meta") {
+            meta_elems
+                .filter(|node_ref| {
+                    let node_attr = node_ref.attributes.borrow();
+                    node_attr.get("content").is_some()
+                })
+                .for_each(|node_ref| {
+                    let node_attr = node_ref.attributes.borrow();
+                    let content = node_attr.get("content").unwrap();
+                    let name_attr = node_attr.get("name");
+                    let mut matches = None;
+                    if let Some(property) = node_attr.get("property") {
+                        matches = regexes::PROPERTY_REGEX.captures(property);
+                        if matches.is_some() {
+                            let captures = matches.as_ref().unwrap();
+                            for capture in captures.iter() {
+                                let mut name = capture.unwrap().as_str().to_lowercase();
+                                name = regexes::REPLACE_WHITESPACE_REGEX
+                                    .replace_all(&name, "")
+                                    .to_string();
+                                values.insert(name, content.trim().to_string());
+                            }
+                        }
+                    }
+                    if matches.is_none() && name_attr.is_some() {
+                        let name_val = name_attr.unwrap();
+                        if regexes::is_match_name_pattern(name_val) {
+                            let name = name_val.to_lowercase();
+                            let name = regexes::REPLACE_WHITESPACE_REGEX.replace(&name, "");
+                            let name = regexes::REPLACE_DOT_REGEX.replace(&name, ":");
+                            values.insert(name.to_string(), content.trim().to_string());
+                        }
+                    }
+                });
+        }
+
+        let meta_title_keys = [
+            "dc:title",
+            "dcterm:title",
+            "og:title",
+            "weibo:article:title",
+            "weibo:webpage:title",
+            "title",
+            "twitter:title",
+        ];
+        meta_data.title = if let Some(key) = meta_title_keys
+            .iter()
+            .find(|key| values.contains_key(**key))
+        {
+            values.get(*key).map(|title| title.to_owned()).unwrap()
+        } else {
+            self.get_article_title()
+        };
+
+        let meta_byline_keys = ["dc:creator", "dcterm:creator", "author"];
+        meta_data.byline = {
+            let possible_key = meta_byline_keys
+                .iter()
+                .find(|key| values.contains_key(**key));
+            if let Some(actual_key) = possible_key {
+                values.get(*actual_key).map(|byline| byline.to_owned())
+            } else {
+                None
+            }
+        };
+
+        let meta_excerpt_keys = [
+            "dc:description",
+            "dcterm:description",
+            "og:description",
+            "weibo:article:description",
+            "weibo:webpage:description",
+            "description",
+            "twitter:description",
+        ];
+        meta_data.excerpt = {
+            let possible_key = meta_excerpt_keys
+                .iter()
+                .find(|key| values.contains_key(**key));
+            if let Some(actual_key) = possible_key {
+                values.get(*actual_key).map(|excerpt| excerpt.to_owned())
+            } else {
+                None
+            }
+        };
+
+        meta_data.site_name = values
+            .get("og:site_name")
+            .map(|site_name| site_name.to_owned());
+
+        Self::unescape_html_entities(&mut meta_data.title);
+        if meta_data.byline.is_some() {
+            Self::unescape_html_entities(&mut meta_data.byline.as_mut().unwrap());
+        }
+
+        if meta_data.excerpt.is_some() {
+            Self::unescape_html_entities(&mut meta_data.excerpt.as_mut().unwrap());
+        }
+
+        if meta_data.site_name.is_some() {
+            Self::unescape_html_entities(&mut meta_data.site_name.as_mut().unwrap());
+        }
+
+        meta_data
+    }
+
+    /// Converts some of the common HTML entities in string to their corresponding characters.
+    fn unescape_html_entities(value: &mut String) {
+        if !value.is_empty() {
+            // TODO: Extract this
+            let mut html_escape_map: HashMap<&str, &str> = HashMap::new();
+            html_escape_map.insert("lt", "<");
+            html_escape_map.insert("gt", ">");
+            html_escape_map.insert("amp", "&");
+            html_escape_map.insert("quot", "\"");
+            html_escape_map.insert("apos", "'");
+            let mut new_value = regexes::REPLACE_HTML_ESCAPE_REGEX
+                .replace_all(&value, |captures: &regex::Captures| {
+                    html_escape_map[&captures[1]].to_string()
+                })
+                .to_string();
+            new_value = regexes::REPLACE_HEX_REGEX
+                .replace_all(&new_value, |captures: &regex::Captures| {
+                    let num = if let Some(hex_capture) = captures.get(1) {
+                        u16::from_str_radix(hex_capture.as_str(), 16)
+                    } else if let Some(dec_capture) = captures.get(2) {
+                        u16::from_str(dec_capture.as_str())
+                    } else {
+                        unreachable!("Unable to match any of the captures");
+                    };
+                    String::from_utf16_lossy(&[num.unwrap()])
+                })
+                .to_string();
+            *value = new_value;
+        }
+    }
+
+    /// Get the article title as an H1.
+    fn get_article_title(&self) -> String {
+        let mut cur_title = self
+            .root_node
+            .select_first("title")
+            .map(|title| title.text_contents().trim().to_string())
+            .expect("This file has no <title> tag to extract a title from");
+        let orig_title = cur_title.clone();
+        let mut title_had_hierarchical_separators = false;
+        let word_count = |s: &str| -> usize { s.split_whitespace().count() };
+        if regexes::is_match_title_separator(&cur_title) {
+            title_had_hierarchical_separators = regexes::is_match_has_title_separator(&cur_title);
+            cur_title = regexes::REPLACE_START_SEPARATOR_REGEX
+                .replace_all(&orig_title, "$start")
+                .to_string();
+            if word_count(&cur_title) < 3 {
+                cur_title = regexes::REPLACE_END_SEPARATOR_REGEX
+                    .replace_all(&orig_title, "$end")
+                    .to_string();
+            }
+        } else if cur_title.contains(": ") {
+            let trimmed_title = cur_title.trim();
+            let is_match_heading = self
+                .root_node
+                .select("h1, h2")
+                .unwrap()
+                .any(|heading| heading.text_contents().trim() == trimmed_title);
+            if !is_match_heading {
+                let mut idx = orig_title.rfind(":").unwrap() + 1;
+                let mut new_title = &orig_title[idx..];
+                if word_count(new_title) < 3 {
+                    idx = orig_title.find(":").unwrap() + 1;
+                    new_title = &orig_title[idx..];
+                } else if word_count(&orig_title[0..orig_title.find(":").unwrap()]) > 5 {
+                    new_title = &orig_title;
+                }
+                cur_title = new_title.to_string();
+            }
+        } else if cur_title.len() > 150 || cur_title.len() < 15 {
+            let mut h1_nodes = self.root_node.select("h1").unwrap();
+            let (_, h1_count) = h1_nodes.size_hint();
+            if Some(1) == h1_count {
+                cur_title = Self::get_inner_text(h1_nodes.next().unwrap().as_node(), None);
+            }
+        }
+        cur_title = regexes::NORMALIZE_REGEX
+            .replace(cur_title.trim(), " ")
+            .to_string();
+        let cur_word_count = word_count(&cur_title);
+
+        if cur_word_count <= 4
+            && (!title_had_hierarchical_separators
+                || cur_word_count
+                    != word_count(&regexes::REPLACE_MULTI_SEPARATOR_REGEX.replace(&orig_title, ""))
+                        - 1)
+        {
+            cur_title = orig_title;
+        }
+        cur_title
     }
 
     /// Converts an inline CSS string to a [HashMap] of property and value(s)
@@ -1672,10 +1869,28 @@ impl Readability {
         }
     }
 }
+#[derive(Debug, PartialEq)]
+pub struct MetaData {
+    byline: Option<String>,
+    excerpt: Option<String>,
+    site_name: Option<String>,
+    title: String,
+}
+
+impl MetaData {
+    pub fn new() -> Self {
+        MetaData {
+            byline: None,
+            excerpt: None,
+            site_name: None,
+            title: "".into(),
+        }
+    }
+}
 
 #[cfg(test)]
 mod test {
-    use super::{Readability, SizeInfo, HTML_NS, READABILITY_SCORE};
+    use super::{MetaData, Readability, SizeInfo, HTML_NS, READABILITY_SCORE};
     use html5ever::{LocalName, Namespace, QualName};
     use kuchiki::traits::*;
     use kuchiki::NodeRef;
@@ -3074,5 +3289,177 @@ characters. For that reason, this <p> tag could not be a byline because it's too
                 .name
                 .local
         );
+    }
+
+    #[test]
+    fn test_get_article_title() {
+        let mut html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <head>
+                <title>Porting Readability to Rust</title>
+            </head>
+            <body>
+                <p></p>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        assert_eq!("Porting Readability to Rust", doc.get_article_title());
+
+        html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <head>
+                <title>Crates.io: The Rust package repository</title>
+            </head>
+            <body>
+                <p></p>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        assert_eq!(
+            "Crates.io: The Rust package repository",
+            doc.get_article_title()
+        );
+
+        html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <head>
+                <title>Crates.io: The Rust package repository</title>
+            </head>
+            <body>
+                <h1>Crates.io: The Rust package repository</h1>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        assert_eq!(
+            "Crates.io: The Rust package repository",
+            doc.get_article_title()
+        );
+
+        html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <head>
+                <title>Crates.io: A package repository</title>
+            </head>
+            <body>
+                <h1>Crates.io: A Rust package repository</h1>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        assert_eq!("Crates.io: A package repository", doc.get_article_title());
+
+        html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <head>
+                <title>Foo developer \ Blog</title>
+            </head>
+            <body>
+                <p></p>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        assert_eq!("Foo developer \\ Blog", doc.get_article_title());
+
+        html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <head>
+                <title>Foo developer » Blog Post on Foo bar stuff</title>
+            </head>
+            <body>
+                <p></p>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        assert_eq!("Blog Post on Foo bar stuff", doc.get_article_title());
+
+        html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <head>
+                <title>Blog</title>
+            </head>
+            <body>
+                <h1>Getting started with Rust</h1>
+            </body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        assert_eq!("Blog", doc.get_article_title());
+    }
+
+    #[test]
+    fn test_unescape_html_entities() {
+        let mut input = "Therefore, 5 &gt; 3".to_string();
+        Readability::unescape_html_entities(&mut input);
+        assert_eq!("Therefore, 5 > 3", &input);
+        input = "Logical AND (&amp;&amp;)".to_string();
+        Readability::unescape_html_entities(&mut input);
+        assert_eq!("Logical AND (&&)", &input);
+        input = "&#117; &#43; &#101; = &#252;".to_string();
+        Readability::unescape_html_entities(&mut input);
+        assert_eq!("u + e = ü", input);
+        input = "&#x0158;&#x016d;&#x0161;&#x0163;".to_string();
+        Readability::unescape_html_entities(&mut input);
+        assert_eq!("Řŭšţ", input);
+    }
+
+    #[test]
+    fn test_get_article_metadata() {
+        let mut html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <head>
+                <meta charset="utf-8"/>
+                <meta name="description" content="A post on how hard it is to work with text."/>
+                <meta name="viewport" content="width=device-width"/>
+                <title>Foo Coder / Blog on the difficulty of using utf-8</title>
+                <meta name="author" content="Foo Coder"/>
+            </head>
+            <body></body>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        let mut result = MetaData::new();
+        result.byline = Some("Foo Coder".to_string());
+        result.excerpt = Some("A post on how hard it is to work with text.".to_string());
+        result.title = "Blog on the difficulty of using utf-8".to_string();
+        assert_eq!(result, doc.get_article_metadata());
+
+        html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <head>
+                <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" user-scalable="no" />
+                <meta name="title" content="A Long Title" />
+                <meta name="description" content="Foo bar baz bo&#223;" />
+                <meta property="og:site_name" content="Blog Place" />
+                <meta property="og:title" content="A Longer Title" />
+                <meta property="og:description" content="Foo bar baz bo&#223;" />
+                <meta name="author" content="F&#x00f6;o Coder" />
+                <meta name="dc:creator" content="F&#x00f6;o Coder" />
+                <meta name="twitter:card" content="summary_large_image" />
+                <title>The Longest Title</title>
+            </head>
+        </html>
+        "#;
+        let doc = Readability::new(html_str);
+        result = MetaData::new();
+        result.byline = Some("Föo Coder".to_string());
+        result.excerpt = Some("Foo bar baz boß".to_string());
+        result.site_name = Some("Blog Place".to_string());
+        result.title = "A Longer Title".to_string();
+        assert_eq!(result, doc.get_article_metadata());
     }
 }

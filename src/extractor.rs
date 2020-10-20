@@ -66,8 +66,6 @@ impl Extractor {
             .extract_attr_val("html", "lang", |lang| lang.to_string())
             .unwrap_or("en".to_string());
 
-        let meta_attrs = MetaAttr::new(author, description, lang, tags, title);
-
         // Extract the article
 
         let article_ref = self.root_node.select_first("article").unwrap();
@@ -189,33 +187,6 @@ fn get_absolute_url(url: &str, request_url: &Url) -> String {
         .into_string()
     } else {
         request_url.join(url).unwrap().into_string()
-    }
-}
-
-#[derive(Debug)]
-pub struct MetaAttr {
-    author: Option<String>,
-    description: Option<String>,
-    language: String,
-    tags: Option<Vec<String>>,
-    title: String,
-}
-
-impl MetaAttr {
-    pub fn new(
-        author: Option<String>,
-        description: Option<String>,
-        language: String,
-        tags: Option<Vec<String>>,
-        title: String,
-    ) -> Self {
-        MetaAttr {
-            author,
-            description,
-            language,
-            tags,
-            title,
-        }
     }
 }
 
