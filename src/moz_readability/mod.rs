@@ -1065,9 +1065,9 @@ impl Readability {
             });
         });
 
-        let mut h2 = node_ref.select("h2").unwrap();
-        if h2.by_ref().count() == 1 {
-            let h2_node = h2.next().unwrap();
+        let h2_nodes = node_ref.select("h2").unwrap().take(2).collect::<Vec<_>>();
+        if h2_nodes.len() == 1 {
+            let h2_node = h2_nodes[0].as_node();
             let length_similar_rate = ((h2_node.text_contents().len() - self.article_title.len())
                 as f32)
                 / self.article_title.len() as f32;
@@ -2887,5 +2887,192 @@ characters. For that reason, this <p> tag could not be a byline because it's too
         let li_count = doc.root_node.select("li").unwrap().count();
         assert_eq!(2, p_count);
         assert_eq!(0, li_count);
+    }
+
+    #[test]
+    fn test_prep_article() {
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <head>
+                <title>A test HTML file</title>
+            </head>
+            <body>
+                <h2>A test HTML file</h2>
+                <div class="search">
+                    Search for other posts
+                    <input type="search" placeholder="Type here...">
+                    <button id="search-btn">Search</button>
+                </div>
+                <aside>Some content aside</aside>
+                <h1>A h1 tag</h1>
+                <h1 class="banner">A h1 tag to be removed</h1>
+                <table id="tbl-one"></table>
+                <table width="100%" border="0" id="tbl-two">
+                    <tr valign="top">
+                        <td width="20%">Left</td>
+                        <td height="200" width="60%">Main Content of the system</td>
+                        <td width="20%">Right</td>
+                    </tr>
+                </table>
+                <div style="color:red; padding: 10px" id="red">A red box</div>
+                <div height="100px" style="color:blue; padding: 10px" id="blue">
+                    A blue box
+                </div>
+                <svg width="100" height="100">
+                    <circle cx="50" cy="50" r="40" fill="green" />
+                </svg>
+                <ul>
+                    <li>one</li>
+                    <li>two</li>
+                    <li>three</li>
+                </ul>
+                <object data="obj.html" width="500" height="200"></object>
+                <table id="tbl-three">
+                    <caption>Monthly savings</caption>
+                    <tr>
+                        <th>Month</th>
+                        <th>Savings</th>
+                    </tr>
+                    <tr>
+                        <td>January</td>
+                        <td>$100</td>
+                    </tr>
+                    <tr>
+                        <td>February</td>
+                        <td>$50</td>
+                    </tr>
+                </table>
+                <iframe id="yt" width="420" height="345" src="https://www.youtube.com/embed/dQw4w9WgXcQ">
+                </iframe>
+                <div id="foo">
+                    <form action="">
+                        <fieldset>
+                            <legend>Personal details:</legend>
+                            <label for="fname">First name:</label>
+                            <input type="text" id="fname" name="fname"><br><br>
+                            <label for="lname">Last name:</label>
+                            <input type="text" id="lname" name="lname"><br><br>
+                        </fieldset>
+                    </form>
+                    <br>
+                    <p id="p-link">
+                        omnis nemo qui libero? Eius suscipit veritatis, tenetur impedit et voluptatibus.
+                        <a href="\#">Rerum repellat totam quam nobis harum fuga consequatur</a>
+                        corrupti?
+                    </p>
+                    <br>
+                    <iframe src="https://www.rust-lang.org/" name="rust_iframe" height="300px" width="100%" title="Rustlang Homepage">
+                    </iframe>
+                </div>
+                <iframe src="https://crates.io/" name="crates_iframe" height="300px" width="100%" title="Crates.io Homepage">
+                </iframe>
+                <table id="tbl-replace-p">
+                    <tr valign="top">
+                        <td width="20%" id="td-to-p"><span>One cell table. This is going to be replaced</span></td>
+                    </tr>
+                </table>
+                <embed type="video/webm" src="video.mp4" width="400" height="300">
+                <br>
+                <embed type="image/jpg" src="foo.jpg" width="300" height="200">
+                <div>
+                    <form action="">
+                        <div>
+                            <label>Join our newsletter</label>
+                            <input type="email" placeholder="Your email address">
+                        </div>
+                        <button>Sign up</button>
+                    </form>
+                </div>
+                <div id="div-p">
+                    <p class="share">Share this as a <a href="\#">Tweet</a></p>
+                    <br>
+                    <p id="share">
+                        Lorem ipsum dolor, sit amet consectetur adipisicing elit. Minima quia numquam aperiam dolores ipsam, eos perferendis cupiditate adipisci perspiciatis
+                        dolore, sunt, iusto nobis? Nulla molestiae id repellat quibusdam nobis quia. Lorem ipsum dolor sit amet consectetur, adipisicing elit. Voluptas
+                        laudantium omnis nemo qui libero? Eius suscipit veritatis, tenetur impedit et voluptatibus. Rerum repellat totam quam nobis harum fuga consequatur
+                        corrupti? Lorem ipsum dolor sit amet consectetur, adipisicing elit. Iure excepturi accusamus nemo voluptatibus laborum minus dicta blanditiis totam
+                        aperiam velit amet cupiditate hic a molestias odio nam, fugiat facere iusto.
+                    </p>
+                </div>
+                <table id="tbl-replace-div">
+                    <tr>
+                        <td id="td-to-div"><pre>One cell table. This is going to be replaced</pre></td>
+                    </tr>
+                </table>
+                <footer>A Paperoni test</footer>
+                <footer>Copyright 2020</footer>
+            </body>
+        </html>
+        "#;
+        let mut doc = Readability::new(html_str);
+        doc.article_title = "A test HTML file".into();
+        let body = doc.root_node.select_first("body").unwrap();
+        doc.prep_article(&mut body.as_node().clone());
+
+        // Ensure tables were assigned their data table scores
+        let table_node = doc.root_node.select_first("table").unwrap();
+        let node_attr = table_node.attributes.borrow();
+        assert_eq!(true, node_attr.get("readability-data-table").is_some());
+
+        let forms_and_fieldsets = doc.root_node.select("form, fieldset").unwrap();
+        assert_eq!(0, forms_and_fieldsets.count());
+
+        let nodes = doc
+            .root_node
+            .select("h1, object, embed, footer, link, aside")
+            .unwrap();
+        assert_eq!(0, nodes.count());
+
+        assert_eq!(2, doc.root_node.select("p").unwrap().count());
+        assert_eq!(true, doc.root_node.select_first("p.share").is_err());
+        assert_eq!(true, doc.root_node.select_first("p#share").is_ok());
+        assert_eq!(true, doc.root_node.select_first("p#td-to-p").is_ok());
+
+        let node = doc.root_node.select_first("h2");
+        assert_eq!(true, node.is_err());
+
+        let nodes = doc
+            .root_node
+            .select("input, textarea, select, button")
+            .unwrap();
+        assert_eq!(0, nodes.count());
+
+        let nodes = doc.root_node.select("iframe").unwrap();
+        assert_eq!(1, nodes.count());
+        let node = doc.root_node.select_first("iframe#yt");
+        assert_eq!(true, node.is_ok());
+
+        let nodes = doc.root_node.select("h1").unwrap();
+        assert_eq!(0, nodes.count());
+
+        let nodes = doc
+            .root_node
+            .select("#tbl-one, #tbl-replace-p, #tbl-replace-div")
+            .unwrap();
+        assert_eq!(0, nodes.count());
+
+        let tables = doc.root_node.select("#tbl-two, #tbl-three").unwrap();
+        assert_eq!(2, tables.count());
+
+        assert_eq!(true, doc.root_node.select_first("ul").is_ok());
+
+        assert_eq!(2, doc.root_node.select("div").unwrap().count());
+        assert_eq!(true, doc.root_node.select_first("div#div-p").is_ok());
+        assert_eq!(true, doc.root_node.select_first("div#td-to-div").is_ok());
+
+        assert_eq!(1, doc.root_node.select("br").unwrap().count());
+        let node_ref = doc.root_node.select_first("br").unwrap();
+        assert_eq!(
+            "div",
+            &node_ref
+                .as_node()
+                .following_siblings()
+                .elements()
+                .next()
+                .unwrap()
+                .name
+                .local
+        );
     }
 }
