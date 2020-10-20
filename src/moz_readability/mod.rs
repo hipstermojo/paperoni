@@ -113,7 +113,7 @@ impl Readability {
     /// This improves the quality of the images we use on some sites (e.g. Medium).
     fn unwrap_no_script_tags(&mut self) {
         if let Ok(imgs) = self.root_node.select("img") {
-            imgs.filter(|img_node_ref| {
+            let mut nodes = imgs.filter(|img_node_ref| {
                 let img_attrs = img_node_ref.attributes.borrow();
                 !img_attrs.map.iter().any(|(name, attr)| {
                     &name.local == "src"
@@ -122,8 +122,12 @@ impl Readability {
                         || &name.local == "data-srcset"
                         || regexes::is_match_img_ext(&attr.value)
                 })
-            })
-            .for_each(|img_ref| img_ref.as_node().detach());
+            });
+            let mut node_ref = nodes.next();
+            while let Some(img_ref) = node_ref {
+                node_ref = nodes.next();
+                img_ref.as_node().detach();
+            }
         }
 
         if let Ok(noscripts) = self.root_node.select("noscript") {
@@ -194,11 +198,23 @@ impl Readability {
     /// Removes script tags from the document.
     fn remove_scripts(&mut self) {
         match self.root_node.select("script") {
-            Ok(script_elems) => script_elems.for_each(|elem| elem.as_node().detach()),
+            Ok(mut script_elems) => {
+                let mut next_script = script_elems.next();
+                while let Some(next_script_ref) = next_script {
+                    next_script = script_elems.next();
+                    next_script_ref.as_node().detach();
+                }
+            }
             Err(_) => (),
         }
         match self.root_node.select("noscript") {
-            Ok(noscript_elems) => noscript_elems.for_each(|elem| elem.as_node().detach()),
+            Ok(mut noscript_elems) => {
+                let mut next_noscript = noscript_elems.next();
+                while let Some(noscript_ref) = next_noscript {
+                    next_noscript = noscript_elems.next();
+                    noscript_ref.as_node().detach();
+                }
+            }
             Err(_) => (),
         }
     }
@@ -207,7 +223,13 @@ impl Readability {
     /// CSS, and handling terrible markup.
     fn prep_document(&mut self) {
         match self.root_node.select("style") {
-            Ok(style_elems) => style_elems.for_each(|elem| elem.as_node().detach()),
+            Ok(mut style_elems) => {
+                let mut style_elem = style_elems.next();
+                while let Some(style_ref) = style_elem {
+                    style_elem = style_elems.next();
+                    style_ref.as_node().detach();
+                }
+            }
             Err(_) => (),
         }
         self.replace_brs();
@@ -234,8 +256,8 @@ impl Readability {
                     {
                         replaced = true;
                         let br_sibling = next_elem.next_sibling();
-                        next_elem.detach();
                         next = Self::next_element(br_sibling, false);
+                        next_elem.detach();
                     } else {
                         break;
                     }
@@ -861,7 +883,6 @@ impl Readability {
     fn clean_conditionally(node_ref: &mut NodeRef, tag_name: &str) {
         // TODO: Add flag check
         let is_list = tag_name == "ul" || tag_name == "ol";
-        let nodes = node_ref.descendants().select(tag_name).unwrap();
         let is_data_table = |node_ref: &NodeRef| {
             let node_elem = node_ref.as_element().unwrap();
             let attrs = node_elem.attributes.borrow();
@@ -869,7 +890,10 @@ impl Readability {
         };
         let get_char_count = |node_ref: &NodeRef| node_ref.text_contents().matches(",").count();
 
-        let mut nodes = nodes
+        let mut nodes = node_ref
+            .descendants()
+            .select(tag_name)
+            .unwrap()
             // Do not remove data tables
             .filter(|node_data_ref| {
                 !(&node_data_ref.name.local == "table" && is_data_table(node_data_ref.as_node()))
@@ -1070,34 +1094,38 @@ impl Readability {
         Self::clean_conditionally(node_ref, "ul");
         Self::clean_conditionally(node_ref, "div");
 
-        node_ref
-            .select("p")
-            .unwrap()
-            .filter(|node_data_ref| {
-                let p_node = node_data_ref.as_node();
-                let img_count = p_node.select("img").unwrap().count();
-                let embed_count = p_node.select("embed").unwrap().count();
-                let object_count = p_node.select("object").unwrap().count();
-                let iframe_count = p_node.select("iframe").unwrap().count();
-                let total = img_count + embed_count + object_count + iframe_count;
-                total == 0 && Self::get_inner_text(node_data_ref.as_node(), Some(false)).is_empty()
-            })
-            .for_each(|node_data_ref| node_data_ref.as_node().detach());
+        let mut p_nodes = node_ref.select("p").unwrap().filter(|node_data_ref| {
+            let p_node = node_data_ref.as_node();
+            let img_count = p_node.select("img").unwrap().count();
+            let embed_count = p_node.select("embed").unwrap().count();
+            let object_count = p_node.select("object").unwrap().count();
+            let iframe_count = p_node.select("iframe").unwrap().count();
+            let total = img_count + embed_count + object_count + iframe_count;
+            total == 0 && Self::get_inner_text(node_data_ref.as_node(), Some(false)).is_empty()
+        });
+        let mut p_node = p_nodes.next();
+        while let Some(p_node_ref) = p_node {
+            p_node = p_nodes.next();
+            p_node_ref.as_node().detach();
+        }
 
-        // TODO: Fix the code for deleting nodes
-        node_ref
-            .select("br")
-            .unwrap()
-            .filter(|node_data_ref| {
-                let br_node = node_data_ref.as_node();
-                // WARN: This assumes `next_element` returns an element node.
-                let next_node = Self::next_element(br_node.next_sibling(), true);
-                next_node.is_some() && &next_node.unwrap().as_element().unwrap().name.local == "p"
-            })
-            .for_each(|node_data_ref| node_data_ref.as_node().detach());
+        let mut br_nodes = node_ref.select("br").unwrap().filter(|node_data_ref| {
+            let br_node = node_data_ref.as_node();
+            // WARN: This assumes `next_element` returns an element node.
+            let next_node = Self::next_element(br_node.next_sibling(), true);
+            next_node.is_some() && &next_node.unwrap().as_element().unwrap().name.local == "p"
+        });
+        let mut br_node = br_nodes.next();
+        while let Some(br_node_ref) = br_node {
+            br_node = br_nodes.next();
+            br_node_ref.as_node().detach();
+        }
 
-        node_ref.select("table").unwrap().for_each(|node_data_ref| {
-            let table_node = node_data_ref.as_node();
+        let mut table_nodes = node_ref.select("table").unwrap();
+        let mut table_node = table_nodes.next();
+        while let Some(table_node_ref) = table_node {
+            table_node = table_nodes.next();
+            let table_node = table_node_ref.as_node();
             // WARN: This assumes `next_element` returns an element node.
             let table_child = Self::next_element(table_node.first_child(), true);
             let tbody = if Self::has_single_tag_inside_element(&table_node, "tbody") {
@@ -1110,7 +1138,7 @@ impl Readability {
             if Self::has_single_tag_inside_element(&tbody, "tr") {
                 let row = Self::next_element(tbody.first_child(), true).unwrap();
                 if Self::has_single_tag_inside_element(&row, "td") {
-                    let cell = Self::next_element(row.first_child(), true).unwrap();
+                    let mut cell = Self::next_element(row.first_child(), true).unwrap();
                     let tag = if cell
                         .children()
                         .all(|cell_child| Self::is_phrasing_content(&cell_child))
@@ -1119,10 +1147,14 @@ impl Readability {
                     } else {
                         "div"
                     };
-                    Self::set_node_tag(&cell, tag);
+                    cell = Self::set_node_tag(&cell, tag);
+                    if let Some(parent) = table_node.parent() {
+                        parent.append(cell);
+                        table_node.detach();
+                    }
                 }
             }
-        });
+        }
     }
 
     /// Using a variety of metrics (content score, classname, element types), find the content that is most likely to be the stuff
