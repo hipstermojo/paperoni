@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 
 use html5ever::{LocalName, Namespace, QualName};
@@ -7,6 +7,7 @@ use kuchiki::{
     traits::*,
     NodeData, NodeRef,
 };
+use url::Url;
 
 const SHARE_ELEMENT_THRESHOLD: usize = 500;
 const READABILITY_SCORE: &'static str = "readability-score";
@@ -68,13 +69,14 @@ impl Readability {
             article_dir: None,
         }
     }
-    pub fn parse(&mut self) {
+    pub fn parse(&mut self, url: &str) {
         self.unwrap_no_script_tags();
         self.remove_scripts();
         self.prep_document();
         let meta_data = self.get_article_metadata();
         self.article_title = meta_data.title.clone();
         self.grab_article();
+        self.post_process_content(url);
     }
 
     /// Recursively check if node is image, or if node contains exactly only one image
@@ -435,8 +437,8 @@ impl Readability {
                         let name_val = name_attr.unwrap();
                         if regexes::is_match_name_pattern(name_val) {
                             let name = name_val.to_lowercase();
-                            let name = regexes::REPLACE_WHITESPACE_REGEX.replace(&name, "");
-                            let name = regexes::REPLACE_DOT_REGEX.replace(&name, ":");
+                            let name = regexes::REPLACE_WHITESPACE_REGEX.replace_all(&name, "");
+                            let name = regexes::REPLACE_DOT_REGEX.replace_all(&name, ":");
                             values.insert(name.to_string(), content.trim().to_string());
                         }
                     }
@@ -590,19 +592,160 @@ impl Readability {
             }
         }
         cur_title = regexes::NORMALIZE_REGEX
-            .replace(cur_title.trim(), " ")
+            .replace_all(cur_title.trim(), " ")
             .to_string();
         let cur_word_count = word_count(&cur_title);
 
         if cur_word_count <= 4
             && (!title_had_hierarchical_separators
                 || cur_word_count
-                    != word_count(&regexes::REPLACE_MULTI_SEPARATOR_REGEX.replace(&orig_title, ""))
-                        - 1)
+                    != word_count(
+                        &regexes::REPLACE_MULTI_SEPARATOR_REGEX.replace_all(&orig_title, ""),
+                    ) - 1)
         {
             cur_title = orig_title;
         }
         cur_title
+    }
+
+    /// Removes the class="" attribute from every element in the given subtree, except those that
+    /// match CLASSES_TO_PRESERVE and the classesToPreserve array from the options object.
+    fn clean_classes(&mut self) {
+        // TODO: This should accessed from Self
+        let classes_to_preserve: HashSet<&str> = HashSet::new();
+        if let Some(article_node) = &mut self.article_node {
+            for elem in article_node.inclusive_descendants().elements() {
+                let mut elem_attrs = elem.attributes.borrow_mut();
+                if let Some(class_list) = elem_attrs.get_mut("class") {
+                    let filtered_class: String = class_list
+                        .split_whitespace()
+                        .filter(|class| classes_to_preserve.contains(class))
+                        .fold("".to_string(), |acc, x| acc + " " + x);
+                    if filtered_class.is_empty() {
+                        elem_attrs.remove("class");
+                    } else {
+                        *class_list = filtered_class;
+                    }
+                }
+            }
+        }
+    }
+
+    ///  Converts each <a> and <img> uri in the given element to an absolute URI, ignoring #ref URIs.
+    fn fix_relative_uris(&mut self, document_uri: &str) {
+        if let Some(article_node) = &mut self.article_node {
+            let document_uri =
+                Url::parse(document_uri).expect("Unable to parse the document's URI");
+            let base_uri = self
+                .root_node
+                .select("base")
+                .unwrap()
+                .filter(|node_ref| {
+                    let node_attrs = node_ref.attributes.borrow();
+                    node_attrs.contains("href")
+                })
+                .map(|node_ref| {
+                    let node_attrs = node_ref.attributes.borrow();
+                    Url::parse(node_attrs.get("href").unwrap()).unwrap()
+                })
+                .next()
+                .unwrap_or(document_uri.clone());
+            let to_absolute_uri = |uri_str: &str| -> String {
+                if base_uri == document_uri && uri_str.starts_with("#") {
+                    return uri_str.to_string();
+                }
+
+                if let Ok(new_uri) = Url::parse(uri_str) {
+                    if new_uri.has_host() {
+                        return new_uri.to_string();
+                    }
+                } else if let Ok(joined_uri) = base_uri.join(uri_str) {
+                    return joined_uri.to_string();
+                }
+
+                uri_str.to_string()
+            };
+            let mut links = article_node.select("a").unwrap().filter(|a_ref| {
+                let link_attrs = a_ref.attributes.borrow();
+                link_attrs.contains("href")
+            });
+            let mut link = links.next();
+            while let Some(link_ref) = link {
+                link = links.next();
+                let mut link_attrs = link_ref.attributes.borrow_mut();
+                let href = link_attrs.get("href").map(|val| val.to_string()).unwrap();
+                if href.starts_with("javascript:") {
+                    let link_node = link_ref.as_node();
+                    if link_node.children().count() == 1
+                        && link_node
+                            .first_child()
+                            .map(|node_ref| node_ref.as_text().is_some())
+                            .unwrap()
+                    {
+                        let text_node = NodeRef::new_text(link_node.text_contents());
+                        link_node.insert_before(text_node);
+                        link_node.detach();
+                    } else {
+                        let container = NodeRef::new_element(
+                            QualName::new(None, Namespace::from(HTML_NS), LocalName::from("span")),
+                            BTreeMap::new(),
+                        );
+                        let mut children = link_node.children();
+                        let mut child = children.next();
+                        while let Some(child_ref) = child {
+                            child = children.next();
+                            container.append(child_ref);
+                        }
+                        link_node.insert_before(container);
+                        link_node.detach();
+                    }
+                } else {
+                    link_attrs.insert("href", to_absolute_uri(&href));
+                }
+            }
+            let media_nodes = article_node
+                .select("img, picture, figure, video, audio, source")
+                .unwrap();
+            for media_node in media_nodes {
+                let mut media_attrs = media_node.attributes.borrow_mut();
+                if let Some(src) = media_attrs.get_mut("src") {
+                    *src = to_absolute_uri(&src);
+                }
+
+                if let Some(poster) = media_attrs.get_mut("poster") {
+                    *poster = to_absolute_uri(&poster);
+                }
+
+                if let Some(srcset) = media_attrs.get_mut("srcset") {
+                    let new_srcset = regexes::SRCSET_CAPTURE_REGEX.replace_all(
+                        &srcset,
+                        |captures: &regex::Captures| {
+                            to_absolute_uri(&captures[1]) + &captures[2] + &captures[3]
+                        },
+                    );
+                    *srcset = new_srcset.to_string();
+                }
+            }
+        }
+    }
+
+    /// Removes readability attributes from DOM nodes as they are not needed in the final article
+    fn clean_readability_attrs(&mut self) {
+        if let Some(article_node) = &mut self.article_node {
+            for node in article_node.inclusive_descendants().elements() {
+                let mut node_attrs = node.attributes.borrow_mut();
+                node_attrs.remove(READABILITY_SCORE);
+                node_attrs.remove("readability-data-table");
+            }
+        }
+    }
+
+    /// Run any post-process modifications to article content as necessary.
+    fn post_process_content(&mut self, url: &str) {
+        self.fix_relative_uris(url);
+        // TODO: Add flag check
+        self.clean_classes();
+        self.clean_readability_attrs();
     }
 
     /// Converts an inline CSS string to a [HashMap] of property and value(s)
@@ -3461,5 +3604,206 @@ characters. For that reason, this <p> tag could not be a byline because it's too
         result.site_name = Some("Blog Place".to_string());
         result.title = "A Longer Title".to_string();
         assert_eq!(result, doc.get_article_metadata());
+    }
+
+    #[test]
+    fn test_fix_relative_uris() {
+        let html_str = r##"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <h1><a href="../home.html">Go back</a></h1>
+                <img id="ex-1" src="https://example.image.com/images/1.jpg" alt="Ex 1">
+                <img id="ex-2" src="https://example.image.com/images/2.jpg" alt="Ex 2">
+                <img id="ex-3" src="../images/2.jpg" alt="Ex 3">
+                <img id="ex-4" src="./images/1.jpg" alt="Ex 4">
+                <img id="ex-5" src="https://images.com/images/1.jpg" alt="Ex 5">
+                <p><a href="#ex-1">First image</a></p>
+            </body>
+        </html>
+        "##;
+        let mut doc = Readability::new(html_str);
+        doc.article_node = doc
+            .root_node
+            .select_first("body")
+            .ok()
+            .map(|node_ref| node_ref.as_node().clone());
+        doc.fix_relative_uris("https://example.image.com/blog/");
+
+        let node = doc.root_node.select_first("img#ex-1").unwrap();
+        let node_attrs = node.attributes.borrow();
+        assert_eq!(
+            Some("https://example.image.com/images/1.jpg"),
+            node_attrs.get("src")
+        );
+
+        let node = doc.root_node.select_first("img#ex-2").unwrap();
+        let node_attrs = node.attributes.borrow();
+        assert_eq!(
+            Some("https://example.image.com/images/2.jpg"),
+            node_attrs.get("src")
+        );
+
+        let node = doc.root_node.select_first("img#ex-3").unwrap();
+        let node_attrs = node.attributes.borrow();
+        assert_eq!(
+            Some("https://example.image.com/images/2.jpg"),
+            node_attrs.get("src")
+        );
+
+        let node = doc.root_node.select_first("img#ex-4").unwrap();
+        let node_attrs = node.attributes.borrow();
+        assert_eq!(
+            Some("https://example.image.com/blog/images/1.jpg"),
+            node_attrs.get("src")
+        );
+
+        let node = doc.root_node.select_first("img#ex-5").unwrap();
+        let node_attrs = node.attributes.borrow();
+        assert_eq!(
+            Some("https://images.com/images/1.jpg"),
+            node_attrs.get("src")
+        );
+
+        let node = doc.root_node.select_first("p a").unwrap();
+        let node_attrs = node.attributes.borrow();
+        assert_eq!(Some("#ex-1"), node_attrs.get("href"));
+
+        let node = doc.root_node.select_first("h1 a").unwrap();
+        let node_attrs = node.attributes.borrow();
+        assert_eq!(
+            Some("https://example.image.com/home.html"),
+            node_attrs.get("href")
+        );
+    }
+
+    #[test]
+    fn test_clean_classes() {
+        // TODO: This test will later be edited to ensure it checks to only remove certain classes
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <p class="a b c d">One</p>
+                <p class="b c d e">Two</p>
+                <div class="a b c div">Three</div>
+                <div class="b c d e">Four</div>
+                <ul class="a b c d">
+                    <li class="a b c d">One</li>
+                    <li class="b c d e">Two</li>
+                    <li class="b c d e">Three</li>
+                </ul>
+            </body>
+        </html>
+        "#;
+        let mut doc = Readability::new(html_str);
+        doc.article_node = doc
+            .root_node
+            .select_first("body")
+            .ok()
+            .map(|node_ref| node_ref.as_node().clone());
+        doc.clean_classes();
+
+        assert_eq!(
+            true,
+            doc.root_node
+                .inclusive_descendants()
+                .elements()
+                .all(|node_elem| {
+                    let node_attrs = node_elem.attributes.borrow();
+                    !node_attrs.contains("class")
+                })
+        );
+    }
+
+    #[test]
+    fn test_clean_readability_attrs() {
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <div readability-score="0.921487">
+                    <p readability-score="0.8102">Welcome to this awesome blog post. Only good content is here. No spam.</p>
+                    <p readability-score="0.6004">Let's look at some statistics</p>
+                    <table readability-score="0.719275" readability-data-table="true">
+                        <caption>Monthly savings</caption>
+                        <tr>
+                            <th>Month</th>
+                            <th>Savings</th>
+                        </tr>
+                        <tr>
+                            <td>January</td>
+                            <td>$100</td>
+                        </tr>
+                        <tr>
+                            <td>February</td>
+                            <td>$50</td>
+                        </tr>
+                    </table>
+                </div>
+            </body>
+        </html>
+        "#;
+        let mut doc = Readability::new(html_str);
+        doc.article_node = doc
+            .root_node
+            .select_first("body")
+            .ok()
+            .map(|node_ref| node_ref.as_node().clone());
+        doc.clean_readability_attrs();
+        assert_eq!(
+            true,
+            doc.root_node
+                .inclusive_descendants()
+                .elements()
+                .all(|node| {
+                    let node_attrs = node.attributes.borrow();
+                    node_attrs.map.len() == 0
+                })
+        );
+    }
+
+    #[test]
+    fn test_post_process_content() {
+        let html_str = r##"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <p class="a b c d">One</p>
+                <p class="b c d e">Two</p>
+                <div class="a b c div">Three</div>
+                <div class="b c d e">
+                    <img src="./img.jpg" class="lazy">
+                </div>
+                <ul class="a b c d">
+                    <li class="a b c d"><a href="#home">One</a></li>
+                    <li class="b c d e">Two</li>
+                    <li class="b c d e">Three</li>
+                </ul>
+            </body>
+        </html>
+        "##;
+        let mut doc = Readability::new(html_str);
+        doc.article_node = doc
+            .root_node
+            .select_first("body")
+            .ok()
+            .map(|node_ref| node_ref.as_node().clone());
+        doc.post_process_content("https://foo.blog/post/");
+        let has_class_attr = doc
+            .root_node
+            .inclusive_descendants()
+            .elements()
+            .any(|node_ref| {
+                let attrs = node_ref.attributes.borrow();
+                attrs.contains("class")
+            });
+        assert_eq!(false, has_class_attr);
+        let a_node = doc.root_node.select_first("a").unwrap();
+        let a_node_attrs = a_node.attributes.borrow();
+        assert_eq!(Some("#home"), a_node_attrs.get("href"));
+        let img_node = doc.root_node.select_first("img").unwrap();
+        let img_attrs = img_node.attributes.borrow();
+        assert_eq!(Some("https://foo.blog/post/img.jpg"), img_attrs.get("src"));
     }
 }

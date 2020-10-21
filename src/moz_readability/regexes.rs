@@ -119,6 +119,8 @@ lazy_static! {
         r"(?i)\s*(dc|dcterm|og|twitter)\s*:\s*(author|creator|description|title|site_name)\s*"
     )
     .unwrap();
+    pub static ref SRCSET_CAPTURE_REGEX: Regex =
+        Regex::new(r"(\S+)(\s+[\d.]+[xw])?(\s*(?:,|$))").unwrap();
     pub static ref REPLACE_WHITESPACE_REGEX: Regex = Regex::new(r"\s").unwrap();
     pub static ref REPLACE_DOT_REGEX: Regex = Regex::new(r"\.").unwrap();
     pub static ref REPLACE_HTML_ESCAPE_REGEX: Regex =
