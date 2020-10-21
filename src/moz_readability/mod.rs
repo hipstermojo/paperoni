@@ -9,7 +9,7 @@ use kuchiki::{
 };
 use url::Url;
 
-const SHARE_ELEMENT_THRESHOLD: usize = 500;
+const DEFAULT_CHAR_THRESHOLD: usize = 500;
 const READABILITY_SCORE: &'static str = "readability-score";
 const HTML_NS: &'static str = "http://www.w3.org/1999/xhtml";
 // TODO: Change to HashSet
@@ -720,7 +720,9 @@ impl Readability {
                     let new_srcset = regexes::SRCSET_CAPTURE_REGEX.replace_all(
                         &srcset,
                         |captures: &regex::Captures| {
-                            to_absolute_uri(&captures[1]) + &captures[2] + &captures[3]
+                            to_absolute_uri(&captures[1])
+                                + &captures.get(2).map(|cap| cap.as_str()).unwrap_or("")
+                                + &captures[3]
                         },
                     );
                     *srcset = new_srcset.to_string();
@@ -778,7 +780,7 @@ impl Readability {
                 && (if let Some(aria_hidden_attr) = attributes.get("aria-hidden"){
                     aria_hidden_attr.trim() != "true"
                 } else if let Some(class_str) = attributes.get("class"){
-                    !class_str.split(" ").collect::<Vec<&str>>().contains(&"fallback-image")
+                    class_str.split(" ").collect::<Vec<&str>>().contains(&"fallback-image")
                 } else {
                     true
                 })
@@ -1401,15 +1403,15 @@ impl Readability {
         node_ref.children().for_each(|mut node| {
             Self::clean_matched_nodes(&mut node, |node: &NodeRef, match_string| {
                 regexes::is_match_share_elems(match_string)
-                    && node.text_contents().len() < SHARE_ELEMENT_THRESHOLD
+                    && node.text_contents().len() < DEFAULT_CHAR_THRESHOLD
             });
         });
 
         let h2_nodes = node_ref.select("h2").unwrap().take(2).collect::<Vec<_>>();
         if h2_nodes.len() == 1 {
             let h2_node = h2_nodes[0].as_node();
-            let length_similar_rate = ((h2_node.text_contents().len() - self.article_title.len())
-                as f32)
+            let length_similar_rate = ((h2_node.text_contents().len() as isize
+                - self.article_title.len() as isize) as f32)
                 / self.article_title.len() as f32;
             if length_similar_rate.abs() < 0.5 {
                 let titles_match = if length_similar_rate > 0.0 {
@@ -1586,7 +1588,7 @@ impl Readability {
                     }
                     _ => (),
                 }
-                if !DEFAULT_TAGS_TO_SCORE.contains(&node_name) {
+                if DEFAULT_TAGS_TO_SCORE.contains(&node_name) {
                     elements_to_score.push(node_ref.clone());
                 }
                 if node_name == "div" {
@@ -1888,7 +1890,9 @@ impl Readability {
 
             let sibling_score_threshold = (10.0_f32).max(top_candidate_score * 0.2);
             parent_of_top_candidate = top_candidate.parent().unwrap();
-            let siblings = parent_of_top_candidate.children();
+            let siblings = parent_of_top_candidate
+                .children()
+                .filter(|node| node.as_element().is_some());
 
             let (top_candidate_class, top_candidate_score) = {
                 let top_candidate_attrs = top_candidate.as_element().unwrap().attributes.borrow();
@@ -1980,7 +1984,7 @@ impl Readability {
 
             let text_length = Self::get_inner_text(&article_content, Some(true)).len();
             let mut parse_successful = true;
-            if text_length < 500 {
+            if text_length < DEFAULT_CHAR_THRESHOLD {
                 // TODO Add flag checks
                 parse_successful = false;
                 println!("I haz a smol content. Plz run me again");
@@ -2393,7 +2397,7 @@ mod test {
             true,
             Readability::is_probably_visible(&visible_aria_div_node.as_node())
         );
-        assert_eq!(false, Readability::is_probably_visible(&img_node.as_node()));
+        assert_eq!(true, Readability::is_probably_visible(&img_node.as_node()));
         assert_eq!(
             true,
             Readability::is_probably_visible(&visible_div_node.as_node())
