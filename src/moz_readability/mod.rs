@@ -773,7 +773,7 @@ impl Readability {
             (if let Some(css_str) = attributes.get("style"){
                 let style_map = Self::inline_css_str_to_map(css_str);
                 if let Some(display_val) = style_map.get("display") {
-                    display_val != &"hidden"
+                    display_val != &"none"
                 } else {
                     true
                 }
@@ -782,13 +782,10 @@ impl Readability {
             })
                 && !attributes.contains("hidden")
             // check for "fallback-image" so that wikimedia math images are displayed
-                && (if let Some(aria_hidden_attr) = attributes.get("aria-hidden"){
-                    aria_hidden_attr.trim() != "true"
-                } else if let Some(class_str) = attributes.get("class"){
-                    class_str.split(" ").collect::<Vec<&str>>().contains(&"fallback-image")
-                } else {
-                    true
-                })
+                &&
+                    (!attributes.contains("aria-hidden") ||
+                    attributes.get("aria-hidden").map(|val| val != "true").unwrap_or(true) ||
+                    attributes.get("class").map(|class_list| class_list.split(" ").collect::<Vec<&str>>().contains(&"fallback-image")).unwrap_or(false))
         } else {
             // Technically, it should not matter what value is returned here
             true
@@ -1766,9 +1763,12 @@ impl Readability {
                     BTreeMap::new(),
                 );
                 needed_to_create_top_candidate = true;
-                page.as_node().children().for_each(|child_node| {
+                let mut page_children = page.as_node().children();
+                let mut page_child = page_children.next();
+                while let Some(child_node) = page_child {
+                    page_child = page_children.next();
                     top_candidate.append(child_node);
-                });
+                }
                 page.as_node().append(top_candidate.clone());
                 self.initialize_node(&mut top_candidate);
             } else {
@@ -1906,7 +1906,8 @@ impl Readability {
 
             let sibling_score_threshold = (10.0_f32).max(top_candidate_score * 0.2);
             parent_of_top_candidate = top_candidate.parent().unwrap();
-            let siblings = parent_of_top_candidate
+
+            let mut siblings = parent_of_top_candidate
                 .children()
                 .filter(|node| node.as_element().is_some());
 
@@ -1922,7 +1923,9 @@ impl Readability {
                     .unwrap();
                 (class, score)
             };
-            for sibling in siblings {
+            let mut next_sibling = siblings.next();
+            while let Some(sibling) = next_sibling {
+                next_sibling = siblings.next();
                 let mut append = false;
                 if sibling == top_candidate {
                     append = true;
@@ -2384,7 +2387,7 @@ mod test {
         <html>
           <body>
             <p id="visible">Lorem ipsum dolores</p>
-            <div id="hidden-div" style="display: hidden">
+            <div id="hidden-div" style="display: none">
               <p>This is hidden and so is the parent</p>
             </div>
             <input value="Some good CSRF token" hidden>
