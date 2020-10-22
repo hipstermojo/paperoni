@@ -7,6 +7,7 @@ version = "0.1.0-alpha1"
 authors = ["Kenneth Gitere <gitere81@gmail.com>"]
 edition = "2018"
 license = "MIT"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

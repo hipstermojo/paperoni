@@ -1,4 +1,4 @@
-<p align="center"><img src="./paperoni-dark.png" width="400"></p>
+<p align="center"><img src="./paperoni-dark.png"></p>
 
 <p align="center"><i>Salami not included</i></p>
 
