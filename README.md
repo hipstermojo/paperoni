@@ -1,6 +1,6 @@
-<img src="./paperoni-dark.png" width="400" style="display: block;margin-left: auto; margin-right: auto;">
+<p align="center"><img src="./paperoni-dark.png" width="400"></p>
 
-<p style="text-align:center;"><i>Salami not included</i></p>
+<p align="center"><i>Salami not included</i></p>
 
 Paperoni is a web article downloader written in Rust. The downloaded articles are then exported as EPUB files.
 

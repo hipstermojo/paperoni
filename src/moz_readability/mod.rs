@@ -46,7 +46,7 @@ const DATA_TABLE_DESCENDANTS: [&str; 5] = ["col", "colgroup", "tfoot", "thead", 
 // TODO: Change to HashSet
 const DEPRECATED_SIZE_ATTRIBUTE_ELEMS: [&str; 5] = ["table", "th", "td", "hr", "pre"];
 
-mod regexes;
+pub mod regexes;
 
 pub struct Readability {
     root_node: NodeRef,

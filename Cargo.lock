@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "paperoni"
-version = "0.1.0"
+version = "0.1.0-alpha1"
 dependencies = [
  "async-std",
  "epub-builder",
