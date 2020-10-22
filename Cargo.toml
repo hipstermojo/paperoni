@@ -1,6 +1,9 @@
 [package]
+description = "A web article downloader"
+homepage = "https://github.com/hipstermojo/paperoni"
+repository = "https://github.com/hipstermojo/paperoni"
 name = "paperoni"
-version = "0.1.0"
+version = "0.1.0-alpha1"
 authors = ["Kenneth Gitere <gitere81@gmail.com>"]
 edition = "2018"
 license = "MIT"
@@ -10,7 +13,11 @@ license = "MIT"
 [dependencies]
 async-std = "1.5.0"
 epub-builder = "0.4.5"
-kuchiki = "0.8.0"
+html5ever = "0.25.1"
+kuchiki = "0.8.1"
+lazy_static = "1.3.9"
 md5 = "0.7.0"
+regex = "1.3.9"
 surf = "1.0.3"
+structopt = { version = "0.3" }
 url = "2.1.1"
