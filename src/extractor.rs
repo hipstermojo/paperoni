@@ -1,14 +1,15 @@
 use async_std::fs::File;
 use async_std::io::prelude::*;
 use async_std::task;
-use kuchiki::NodeRef;
+use kuchiki::{traits::*, NodeRef};
 use url::Url;
 
-use super::moz_readability::Readability;
+use crate::moz_readability::{MetaData, Readability};
 
 pub type ResourceInfo = (String, Option<String>);
 
 pub struct Extractor {
+    article: Option<NodeRef>,
     pub img_urls: Vec<ResourceInfo>,
     readability: Readability,
 }
@@ -17,6 +18,7 @@ impl Extractor {
     /// Create a new instance of an HTML extractor given an HTML string
     pub fn from_html(html_str: &str) -> Self {
         Extractor {
+            article: None,
             img_urls: Vec::new(),
             readability: Readability::new(html_str),
         }
@@ -26,6 +28,20 @@ impl Extractor {
     /// the source of the content
     pub fn extract_content(&mut self, url: &str) {
         self.readability.parse(url);
+        if let Some(article_node_ref) = &self.readability.article_node {
+            let template = r#"
+            <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+                <head>
+                </head>
+                <body>
+                </body>
+            </html>
+            "#;
+            let doc = kuchiki::parse_html().one(template);
+            let body = doc.select_first("body").unwrap();
+            body.as_node().append(article_node_ref.clone());
+            self.article = Some(doc);
+        }
     }
 
     /// Traverses the DOM tree of the content and retrieves the IMG URLs
@@ -94,7 +110,11 @@ impl Extractor {
     }
 
     pub fn article(&self) -> Option<&NodeRef> {
-        self.readability.article_node.as_ref()
+        self.article.as_ref()
+    }
+
+    pub fn metadata(&self) -> &MetaData {
+        &self.readability.metadata
     }
 }
 

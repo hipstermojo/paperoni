@@ -46,7 +46,8 @@ fn download(url: String) {
                 .download_images(&Url::parse(&url).unwrap())
                 .await
                 .expect("Unable to download images");
-            let mut out_file = File::create("out.epub").unwrap();
+            let mut out_file =
+                File::create(format!("{}.epub", extractor.metadata().title())).unwrap();
             let mut html_buf = Vec::new();
             extractor
                 .article()
@@ -55,6 +56,11 @@ fn download(url: String) {
                 .expect("Unable to serialize");
             let html_buf = std::str::from_utf8(&html_buf).unwrap();
             let mut epub = EpubBuilder::new(ZipLibrary::new().unwrap()).unwrap();
+            if let Some(author) = extractor.metadata().byline() {
+                epub.metadata("author", author).unwrap();
+            }
+            epub.metadata("title", extractor.metadata().title())
+                .unwrap();
             epub.add_content(EpubContent::new("code.xhtml", html_buf.as_bytes()))
                 .unwrap();
             for img in extractor.img_urls {

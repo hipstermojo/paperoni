@@ -55,6 +55,7 @@ pub struct Readability {
     pub article_node: Option<NodeRef>,
     article_dir: Option<String>,
     flags: u32,
+    pub metadata: MetaData,
 }
 
 #[derive(Debug, PartialEq)]
@@ -72,14 +73,15 @@ impl Readability {
             article_node: None,
             article_dir: None,
             flags: FLAG_STRIP_UNLIKELYS | FLAG_WEIGHT_CLASSES | FLAG_CLEAN_CONDITIONALLY,
+            metadata: MetaData::new(),
         }
     }
     pub fn parse(&mut self, url: &str) {
         self.unwrap_no_script_tags();
         self.remove_scripts();
         self.prep_document();
-        let meta_data = self.get_article_metadata();
-        self.article_title = meta_data.title.clone();
+        self.metadata = self.get_article_metadata();
+        self.article_title = self.metadata.title.clone();
         self.grab_article();
         self.post_process_content(url);
     }
@@ -2076,6 +2078,14 @@ impl MetaData {
             site_name: None,
             title: "".into(),
         }
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn byline(&self) -> Option<&String> {
+        self.byline.as_ref()
     }
 }
 
