@@ -9,5 +9,5 @@ use structopt::StructOpt;
 pub struct Opts {
     // #[structopt(conflicts_with("links"))]
     /// Url of a web article
-    pub url: Option<String>,
+    pub urls: Vec<String>,
 }
