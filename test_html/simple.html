@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Sample Document</title>
+</head>
+
+<body>
+    <h1>Some text in h1</h1>
+    <img src="inexistent.png">
+    <div class="invalid-elems">
+        <!-- This div contains invalid elements -->
+        <h1>Imagine some lorem ipsum</h1>
+        <img>
+    </div>
+    <!-- Test that the no-script content is copied over -->
+    <img src="lazy-load.png">
+    <noscript>
+        <div class="parent">
+            <img src="eager-load.png" id="lazy-load">
+        </div>
+    </noscript>
+</body>
+
+</html>

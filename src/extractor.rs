@@ -1,90 +1,53 @@
 use async_std::fs::File;
 use async_std::io::prelude::*;
 use async_std::task;
-use kuchiki::{traits::*, ElementData, NodeDataRef, NodeRef};
+use kuchiki::{traits::*, NodeRef};
 use url::Url;
+
+use crate::moz_readability::{MetaData, Readability};
 
 pub type ResourceInfo = (String, Option<String>);
 
 pub struct Extractor {
-    pub root_node: NodeRef,
-    pub content: Option<NodeDataRef<ElementData>>,
+    article: Option<NodeRef>,
     pub img_urls: Vec<ResourceInfo>,
+    readability: Readability,
 }
 
 impl Extractor {
     /// Create a new instance of an HTML extractor given an HTML string
     pub fn from_html(html_str: &str) -> Self {
         Extractor {
-            content: None,
+            article: None,
             img_urls: Vec::new(),
-            root_node: kuchiki::parse_html().one(html_str),
+            readability: Readability::new(html_str),
         }
-    }
-
-    /// Extract the value of an attribute
-    fn extract_attr_val<T: Fn(&str) -> U, U>(
-        &self,
-        css_selector: &str,
-        attr_target: &str,
-        mapper: T,
-    ) -> Option<U> {
-        self.root_node
-            .select_first(css_selector)
-            .ok()
-            .and_then(|data| data.attributes.borrow().get(attr_target).map(mapper))
-    }
-
-    /// Extract the text of a DOM node given its CSS selector
-    fn extract_inner_text(&self, css_selector: &str) -> Option<String> {
-        let node_ref = self.root_node.select_first(css_selector).ok()?;
-        extract_text_from_node(node_ref.as_node())
     }
 
     /// Locates and extracts the HTML in a document which is determined to be
     /// the source of the content
-    pub fn extract_content(&mut self) {
-        // Extract the useful parts of the head section
-        let author: Option<String> =
-            self.extract_attr_val("meta[name='author']", "content", |author| {
-                author.to_string()
-            });
-
-        let description =
-            self.extract_attr_val("meta[name='description']", "content", |description| {
-                description.to_string()
-            });
-
-        let tags = self.extract_attr_val("meta[name='keywords']", "content", |tags| {
-            tags.split(",")
-                .map(|tag| tag.trim().to_string())
-                .collect::<Vec<String>>()
-        });
-
-        let title = self.extract_inner_text("title").unwrap_or("".to_string());
-        let lang = self
-            .extract_attr_val("html", "lang", |lang| lang.to_string())
-            .unwrap_or("en".to_string());
-
-        let meta_attrs = MetaAttr::new(author, description, lang, tags, title);
-
-        // Extract the article
-
-        let article_ref = self.root_node.select_first("article").unwrap();
-
-        for node_ref in article_ref.as_node().descendants() {
-            match node_ref.data() {
-                kuchiki::NodeData::Element(..) | kuchiki::NodeData::Text(..) => (),
-                _ => node_ref.detach(),
-            }
+    pub fn extract_content(&mut self, url: &str) {
+        self.readability.parse(url);
+        if let Some(article_node_ref) = &self.readability.article_node {
+            let template = r#"
+            <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+                <head>
+                </head>
+                <body>
+                </body>
+            </html>
+            "#;
+            let doc = kuchiki::parse_html().one(template);
+            let body = doc.select_first("body").unwrap();
+            body.as_node().append(article_node_ref.clone());
+            self.article = Some(doc);
         }
-        self.content = Some(article_ref);
     }
 
     /// Traverses the DOM tree of the content and retrieves the IMG URLs
     fn extract_img_urls(&mut self) {
-        if let Some(content_ref) = &self.content {
-            for img_ref in content_ref.as_node().select("img").unwrap() {
+        if let Some(content_ref) = &self.readability.article_node {
+            for img_ref in content_ref.select("img").unwrap() {
                 img_ref.as_node().as_element().map(|img_elem| {
                     img_elem.attributes.borrow().get("src").map(|img_url| {
                         if !img_url.is_empty() {
@@ -133,10 +96,10 @@ impl Extractor {
             let (img_url, img_path, img_mime) = async_task.await;
             // Update the image sources
             let img_ref = self
-                .content
+                .readability
+                .article_node
                 .as_mut()
                 .expect("Unable to get mutable ref")
-                .as_node()
                 .select_first(&format!("img[src='{}']", img_url))
                 .expect("Image node does not exist");
             let mut img_node = img_ref.attributes.borrow_mut();
@@ -145,11 +108,14 @@ impl Extractor {
         }
         Ok(())
     }
-}
 
-fn extract_text_from_node(node: &NodeRef) -> Option<String> {
-    node.first_child()
-        .map(|child_ref| child_ref.text_contents())
+    pub fn article(&self) -> Option<&NodeRef> {
+        self.article.as_ref()
+    }
+
+    pub fn metadata(&self) -> &MetaData {
+        &self.readability.metadata
+    }
 }
 
 /// Utility for hashing URLs. This is used to help store files locally with unique values
@@ -192,33 +158,6 @@ fn get_absolute_url(url: &str, request_url: &Url) -> String {
     }
 }
 
-#[derive(Debug)]
-pub struct MetaAttr {
-    author: Option<String>,
-    description: Option<String>,
-    language: String,
-    tags: Option<Vec<String>>,
-    title: String,
-}
-
-impl MetaAttr {
-    pub fn new(
-        author: Option<String>,
-        description: Option<String>,
-        language: String,
-        tags: Option<Vec<String>>,
-        title: String,
-    ) -> Self {
-        MetaAttr {
-            author,
-            description,
-            language,
-            tags,
-            title,
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -251,85 +190,16 @@ mod test {
         "#;
 
     #[test]
-    fn test_extract_attr_val() {
-        let extractor = Extractor::from_html(TEST_HTML);
-        let ext_author =
-            extractor.extract_attr_val("meta[name='author']", "content", |val| val.to_string());
-        assert!(ext_author.is_some());
-        assert_eq!("Paperoni", &ext_author.unwrap());
-        let ext_author =
-            extractor.extract_attr_val("meta[name='invalid-name']", "content", |val| {
-                val.to_string()
-            });
-        assert!(ext_author.is_none());
-        let lang_attr = extractor.extract_attr_val("html", "lang", |lang| lang.to_string());
-        assert!(lang_attr.is_some());
-        assert_eq!("en".to_string(), lang_attr.unwrap());
-    }
-
-    #[test]
-    fn test_extract_inner_text() {
-        let extractor = Extractor::from_html(TEST_HTML);
-        let title_text = extractor.extract_inner_text("title");
-        assert!(title_text.is_some());
-        assert_eq!("Testing Paperoni".to_string(), title_text.unwrap());
-
-        let title_text = extractor.extract_inner_text("titln");
-        assert!(title_text.is_none());
-    }
-    #[test]
-    fn test_extract_text() {
-        let extractor = Extractor::from_html(TEST_HTML);
-        let h1_node = extractor.root_node.select_first("h1").unwrap();
-        let h1_text = extract_text_from_node(h1_node.as_node());
-        assert!(h1_text.is_some());
-        assert_eq!("Testing Paperoni".to_string(), h1_text.unwrap());
-    }
-
-    #[test]
-    fn test_extract_content() {
-        let extracted_html: String = r#"
-            <article>
-                <h1>Starting out</h1>
-                <p>Some Lorem Ipsum text here</p>
-                <p>Observe this picture</p>
-                <img alt="Random image" src="./img.jpg">
-            </article>
-        "#
-        .lines()
-        .map(|line| line.trim())
-        .collect();
-
-        let mut extractor = Extractor::from_html(
-            &TEST_HTML
-                .lines()
-                .map(|line| line.trim())
-                .collect::<String>(),
-        );
-
-        extractor.extract_content();
-        let mut output = Vec::new();
-        assert!(extractor.content.is_some());
-
-        extractor
-            .content
-            .unwrap()
-            .as_node()
-            .serialize(&mut output)
-            .expect("Unable to serialize output HTML");
-        let output = std::str::from_utf8(&output).unwrap();
-
-        assert_eq!(extracted_html, output);
-    }
-
-    #[test]
     fn test_extract_img_urls() {
         let mut extractor = Extractor::from_html(TEST_HTML);
-        extractor.extract_content();
+        extractor.extract_content("http://example.com/");
         extractor.extract_img_urls();
 
         assert!(extractor.img_urls.len() > 0);
-        assert_eq!(vec![("./img.jpg".to_string(), None)], extractor.img_urls);
+        assert_eq!(
+            vec![("http://example.com/img.jpg".to_string(), None)],
+            extractor.img_urls
+        );
     }
 
     #[test]
@@ -353,25 +223,5 @@ mod test {
             vec![".apng", ".bmp", ".gif", ".ico", ".jpeg", ".png", ".svg", ".tiff", ".webp"],
             exts
         );
-    }
-
-    #[test]
-    fn test_get_absolute_url() {
-        let absolute_url = "https://example.image.com/images/1.jpg";
-        let relative_url = "../../images/2.jpg";
-        let relative_from_host_url = "/images/3.jpg";
-        let host_url = Url::parse("https://example.image.com/blog/how-to-test-resolvers/").unwrap();
-        let abs_url = get_absolute_url(&absolute_url, &host_url);
-        assert_eq!("https://example.image.com/images/1.jpg", abs_url);
-        let abs_url = get_absolute_url(&relative_url, &host_url);
-        assert_eq!("https://example.image.com/images/2.jpg", abs_url);
-        let relative_url = "2-1.jpg";
-        let abs_url = get_absolute_url(&relative_url, &host_url);
-        assert_eq!(
-            "https://example.image.com/blog/how-to-test-resolvers/2-1.jpg",
-            abs_url
-        );
-        let abs_url = get_absolute_url(&relative_from_host_url, &host_url);
-        assert_eq!("https://example.image.com/images/3.jpg", abs_url);
     }
 }
