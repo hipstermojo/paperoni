@@ -10,6 +10,9 @@ use kuchiki::{
 use url::Url;
 
 const DEFAULT_CHAR_THRESHOLD: usize = 500;
+const FLAG_STRIP_UNLIKELYS: u32 = 0x1;
+const FLAG_WEIGHT_CLASSES: u32 = 0x2;
+const FLAG_CLEAN_CONDITIONALLY: u32 = 0x4;
 const READABILITY_SCORE: &'static str = "readability-score";
 const HTML_NS: &'static str = "http://www.w3.org/1999/xhtml";
 // TODO: Change to HashSet
@@ -51,6 +54,7 @@ pub struct Readability {
     article_title: String,
     pub article_node: Option<NodeRef>,
     article_dir: Option<String>,
+    flags: u32,
 }
 
 #[derive(Debug, PartialEq)]
@@ -67,6 +71,7 @@ impl Readability {
             article_title: "".into(),
             article_node: None,
             article_dir: None,
+            flags: FLAG_STRIP_UNLIKELYS | FLAG_WEIGHT_CLASSES | FLAG_CLEAN_CONDITIONALLY,
         }
     }
     pub fn parse(&mut self, url: &str) {
@@ -992,8 +997,10 @@ impl Readability {
 
     /// Get an element's class/id weight using regular expressions to tell if this
     /// element looks good or bad.
-    fn get_class_weight(node_ref: &NodeRef) -> i32 {
-        //TODO: Add check for weighing classes
+    fn get_class_weight(&self, node_ref: &NodeRef) -> i32 {
+        if !self.flag_is_active(FLAG_WEIGHT_CLASSES) {
+            return 0;
+        }
         let mut weight = 0;
         let node_elem = node_ref.as_element().unwrap();
         let node_attrs = node_elem.attributes.borrow();
@@ -1024,12 +1031,12 @@ impl Readability {
 
     /// Initialize a node with the readability attribute. Also checks the
     /// className/id for special names to add to its score.
-    fn initialize_node(node_ref: &mut NodeRef) {
+    fn initialize_node(&self, node_ref: &mut NodeRef) {
         if let Some(element) = node_ref.as_element() {
             let mut score = 0.0;
             // This must be computed first because it borrows the NodeRef which
             // should not also be mutably borrowed
-            score += Self::get_class_weight(node_ref) as f32;
+            score += self.get_class_weight(node_ref) as f32;
             let mut elem_attrs = element.attributes.borrow_mut();
             elem_attrs.insert(READABILITY_SCORE, score.to_string());
             let readability = elem_attrs.get_mut(READABILITY_SCORE);
@@ -1222,8 +1229,10 @@ impl Readability {
 
     /// Clean an element of all tags of type "tag" if they look fishy. "Fishy" is an algorithm
     /// based on content length, classnames, link density, number of images & embeds, etc.
-    fn clean_conditionally(node_ref: &mut NodeRef, tag_name: &str) {
-        // TODO: Add flag check
+    fn clean_conditionally(&self, node_ref: &mut NodeRef, tag_name: &str) {
+        if !self.flag_is_active(FLAG_CLEAN_CONDITIONALLY) {
+            return;
+        }
         let is_list = tag_name == "ul" || tag_name == "ol";
         let is_data_table = |node_ref: &NodeRef| {
             let node_elem = node_ref.as_element().unwrap();
@@ -1253,7 +1262,7 @@ impl Readability {
         while let Some(node_data_ref) = next_node {
             next_node = nodes.next();
             let node = node_data_ref.as_node();
-            let weight = Self::get_class_weight(node);
+            let weight = self.get_class_weight(node);
             // Remove all elements with negative class weights
             if weight < 0 {
                 node.detach();
@@ -1336,12 +1345,12 @@ impl Readability {
     }
 
     /// Clean out spurious headers from an Element. Checks things like classnames and link density.
-    fn clean_headers(node_ref: &mut NodeRef) {
+    fn clean_headers(&self, node_ref: &mut NodeRef) {
         let mut nodes = node_ref
             .descendants()
             .select("h1, h2")
             .unwrap()
-            .filter(|node_data_ref| Self::get_class_weight(node_data_ref.as_node()) < 0);
+            .filter(|node_data_ref| self.get_class_weight(node_data_ref.as_node()) < 0);
         let mut node = nodes.next();
 
         while let Some(node_data_ref) = node {
@@ -1391,8 +1400,8 @@ impl Readability {
         Self::clean_styles(node_ref);
         self.mark_data_tables();
         Self::fix_lazy_images(node_ref);
-        Self::clean_conditionally(node_ref, "form");
-        Self::clean_conditionally(node_ref, "fieldset");
+        self.clean_conditionally(node_ref, "form");
+        self.clean_conditionally(node_ref, "fieldset");
         Self::clean(node_ref, "object");
         Self::clean(node_ref, "embed");
         Self::clean(node_ref, "h1");
@@ -1430,11 +1439,11 @@ impl Readability {
         Self::clean(node_ref, "textarea");
         Self::clean(node_ref, "select");
         Self::clean(node_ref, "button");
-        Self::clean_headers(node_ref);
+        self.clean_headers(node_ref);
 
-        Self::clean_conditionally(node_ref, "table");
-        Self::clean_conditionally(node_ref, "ul");
-        Self::clean_conditionally(node_ref, "div");
+        self.clean_conditionally(node_ref, "table");
+        self.clean_conditionally(node_ref, "ul");
+        self.clean_conditionally(node_ref, "div");
 
         let mut p_nodes = node_ref.select("p").unwrap().filter(|node_data_ref| {
             let p_node = node_data_ref.as_node();
@@ -1499,6 +1508,14 @@ impl Readability {
         }
     }
 
+    fn flag_is_active(&self, flag: u32) -> bool {
+        self.flags & flag > 0
+    }
+
+    fn remove_flag(&mut self, flag: u32) {
+        self.flags = self.flags & !flag;
+    }
+
     /// Using a variety of metrics (content score, classname, element types), find the content that is most likely to be the stuff
     /// a user wants to read. Then return it wrapped up in a div.
     fn grab_article(&mut self) {
@@ -1524,8 +1541,7 @@ impl Readability {
 
         loop {
             //   var stripUnlikelyCandidates = this._flagIsActive(this.FLAG_STRIP_UNLIKELYS);
-            // TODO: Add flag for checking this
-            let strip_unlikely_candidates = true;
+            let strip_unlikely_candidates = self.flag_is_active(FLAG_STRIP_UNLIKELYS);
 
             //   // First, node prepping. Trash nodes that look cruddy (like ones with the
             //   // class name "comment", etc), and turn divs into P tags where they have been
@@ -1675,7 +1691,7 @@ impl Readability {
                                 ancestor_attrs.contains(READABILITY_SCORE)
                             };
                             if !has_readability {
-                                Self::initialize_node(&mut ancestor);
+                                self.initialize_node(&mut ancestor);
                                 candidates.push(ancestor.clone());
                             }
 
@@ -1754,7 +1770,7 @@ impl Readability {
                     top_candidate.append(child_node);
                 });
                 page.as_node().append(top_candidate.clone());
-                Self::initialize_node(&mut top_candidate);
+                self.initialize_node(&mut top_candidate);
             } else {
                 let alternative_candidate_ancestors: Vec<Vec<NodeRef>>;
                 top_candidate = top_candidates.get(0).unwrap().clone();
@@ -1813,7 +1829,7 @@ impl Readability {
                 };
 
                 if top_candidate_readability.is_none() {
-                    Self::initialize_node(&mut top_candidate);
+                    self.initialize_node(&mut top_candidate);
                 }
                 parent_of_top_candidate = top_candidate.parent().unwrap();
 
@@ -1873,7 +1889,7 @@ impl Readability {
                         .map(|score| score.to_string())
                 };
                 if top_candidate_readability.is_none() {
-                    Self::initialize_node(&mut top_candidate);
+                    self.initialize_node(&mut top_candidate);
                 }
             }
             let mut article_content = NodeRef::new_element(
@@ -1985,9 +2001,16 @@ impl Readability {
             let text_length = Self::get_inner_text(&article_content, Some(true)).len();
             let mut parse_successful = true;
             if text_length < DEFAULT_CHAR_THRESHOLD {
-                // TODO Add flag checks
                 parse_successful = false;
-                println!("I haz a smol content. Plz run me again");
+                if self.flag_is_active(FLAG_STRIP_UNLIKELYS) {
+                    self.remove_flag(FLAG_STRIP_UNLIKELYS);
+                } else if self.flag_is_active(FLAG_WEIGHT_CLASSES) {
+                    self.remove_flag(FLAG_WEIGHT_CLASSES);
+                } else if self.flag_is_active(FLAG_CLEAN_CONDITIONALLY) {
+                    self.remove_flag(FLAG_CLEAN_CONDITIONALLY);
+                } else {
+                    parse_successful = true;
+                }
             }
             if parse_successful {
                 let parent_ancestors = Self::get_node_ancestors(&parent_of_top_candidate, None);
@@ -2037,7 +2060,10 @@ impl MetaData {
 
 #[cfg(test)]
 mod test {
-    use super::{MetaData, Readability, SizeInfo, HTML_NS, READABILITY_SCORE};
+    use super::{
+        MetaData, Readability, SizeInfo, FLAG_CLEAN_CONDITIONALLY, FLAG_STRIP_UNLIKELYS,
+        FLAG_WEIGHT_CLASSES, HTML_NS, READABILITY_SCORE,
+    };
     use html5ever::{LocalName, Namespace, QualName};
     use kuchiki::traits::*;
     use kuchiki::NodeRef;
@@ -2793,22 +2819,22 @@ characters. For that reason, this <p> tag could not be a byline because it's too
         "#;
         let doc = Readability::new(html_str);
         let mut target = doc.root_node.select_first("body").unwrap();
-        assert_eq!(0, Readability::get_class_weight(target.as_node()));
+        assert_eq!(0, doc.get_class_weight(target.as_node()));
 
         target = doc.root_node.select_first("div#blog").unwrap();
-        assert_eq!(50, Readability::get_class_weight(target.as_node()));
+        assert_eq!(50, doc.get_class_weight(target.as_node()));
 
         target = doc.root_node.select_first("h1.hidden").unwrap();
-        assert_eq!(-25, Readability::get_class_weight(target.as_node()));
+        assert_eq!(-25, doc.get_class_weight(target.as_node()));
 
         target = doc.root_node.select_first("p#story").unwrap();
-        assert_eq!(25, Readability::get_class_weight(target.as_node()));
+        assert_eq!(25, doc.get_class_weight(target.as_node()));
 
         target = doc.root_node.select_first("div#comments").unwrap();
-        assert_eq!(-25, Readability::get_class_weight(target.as_node()));
+        assert_eq!(-25, doc.get_class_weight(target.as_node()));
 
         target = doc.root_node.select_first("p.comment").unwrap();
-        assert_eq!(-25, Readability::get_class_weight(target.as_node()));
+        assert_eq!(-25, doc.get_class_weight(target.as_node()));
     }
 
     #[test]
@@ -2831,31 +2857,31 @@ characters. For that reason, this <p> tag could not be a byline because it's too
         let doc = Readability::new(html_str);
         let mut target = doc.root_node.select_first("div#blog").unwrap();
         let mut node = target.as_node().clone();
-        Readability::initialize_node(&mut node);
+        doc.initialize_node(&mut node);
         let node_attrs = node.as_element().unwrap().attributes.borrow();
         assert_eq!(Some("55"), node_attrs.get(READABILITY_SCORE));
 
         target = doc.root_node.select_first("h1.hidden").unwrap();
         let mut node = target.as_node().clone();
-        Readability::initialize_node(&mut node);
+        doc.initialize_node(&mut node);
         let node_attrs = node.as_element().unwrap().attributes.borrow();
         assert_eq!(Some("-30"), node_attrs.get(READABILITY_SCORE));
 
         target = doc.root_node.select_first("p#story").unwrap();
         let mut node = target.as_node().clone();
-        Readability::initialize_node(&mut node);
+        doc.initialize_node(&mut node);
         let node_attrs = node.as_element().unwrap().attributes.borrow();
         assert_eq!(Some("25"), node_attrs.get(READABILITY_SCORE));
 
         target = doc.root_node.select_first("div#comments").unwrap();
         let mut node = target.as_node().clone();
-        Readability::initialize_node(&mut node);
+        doc.initialize_node(&mut node);
         let node_attrs = node.as_element().unwrap().attributes.borrow();
         assert_eq!(Some("-20"), node_attrs.get(READABILITY_SCORE));
 
         target = doc.root_node.select_first("pre.comment").unwrap();
         let mut node = target.as_node().clone();
-        Readability::initialize_node(&mut node);
+        doc.initialize_node(&mut node);
         let node_attrs = node.as_element().unwrap().attributes.borrow();
         assert_eq!(Some("-22"), node_attrs.get(READABILITY_SCORE));
     }
@@ -3108,14 +3134,14 @@ characters. For that reason, this <p> tag could not be a byline because it's too
         let mut doc = Readability::new(html_str);
         let body = doc.root_node.select_first("body").unwrap();
         doc.mark_data_tables();
-        Readability::clean_conditionally(&mut body.as_node().clone(), "table");
+        doc.clean_conditionally(&mut body.as_node().clone(), "table");
         assert_eq!(true, doc.root_node.select_first("#data-table").is_ok());
         assert_eq!(false, doc.root_node.select_first("#display-table").is_ok());
         assert_eq!(
             false,
             doc.root_node.select_first("#display-table-removed").is_ok()
         );
-        Readability::clean_conditionally(&mut body.as_node().clone(), "div");
+        doc.clean_conditionally(&mut body.as_node().clone(), "div");
         assert_eq!(false, doc.root_node.select_first("div.comment").is_ok());
         assert_eq!(true, doc.root_node.select_first("div#some-content").is_ok());
         assert_eq!(true, doc.root_node.select_first("div#embeds").is_ok());
@@ -3174,7 +3200,7 @@ characters. For that reason, this <p> tag could not be a byline because it's too
         let h2_count = doc.root_node.select("h2").unwrap().count();
         assert_eq!(2, h1_count);
         assert_eq!(1, h2_count);
-        Readability::clean_headers(&mut body.as_node().clone());
+        doc.clean_headers(&mut body.as_node().clone());
         let h1_count = doc.root_node.select("h1").unwrap().count();
         let h2_count = doc.root_node.select("h2").unwrap().count();
         assert_eq!(0, h1_count);
@@ -3809,5 +3835,39 @@ characters. For that reason, this <p> tag could not be a byline because it's too
         let img_node = doc.root_node.select_first("img").unwrap();
         let img_attrs = img_node.attributes.borrow();
         assert_eq!(Some("https://foo.blog/post/img.jpg"), img_attrs.get("src"));
+    }
+
+    #[test]
+    fn test_flag_is_active() {
+        let html_str = r"
+        <!DOCTYPE html>
+        <html>
+            <body>
+            </body>
+        </html>
+        ";
+        let doc = Readability::new(html_str);
+        assert_eq!(true, doc.flag_is_active(FLAG_STRIP_UNLIKELYS));
+        assert_eq!(true, doc.flag_is_active(FLAG_WEIGHT_CLASSES));
+        assert_eq!(true, doc.flag_is_active(FLAG_CLEAN_CONDITIONALLY));
+    }
+
+    #[test]
+    fn test_remove_flag() {
+        let html_str = r"
+        <!DOCTYPE html>
+        <html>
+            <body>
+            </body>
+        </html>
+        ";
+        let mut doc = Readability::new(html_str);
+        assert_eq!(true, doc.flag_is_active(FLAG_CLEAN_CONDITIONALLY));
+        doc.remove_flag(FLAG_CLEAN_CONDITIONALLY);
+        assert_eq!(false, doc.flag_is_active(FLAG_CLEAN_CONDITIONALLY));
+        assert_eq!(true, doc.flag_is_active(FLAG_WEIGHT_CLASSES));
+        doc.remove_flag(FLAG_WEIGHT_CLASSES);
+        assert_eq!(false, doc.flag_is_active(FLAG_WEIGHT_CLASSES));
+        assert_eq!(true, doc.flag_is_active(FLAG_STRIP_UNLIKELYS));
     }
 }
