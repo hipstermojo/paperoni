@@ -1527,14 +1527,10 @@ impl Readability {
             return;
         }
         let page = page.unwrap();
-
-        // // We can't grab an article if we don't have a page!
-        // if (!page) {
-        //   this.log("No body found in document. Abort.");
-        //   return null;
-        // }
+        let mut attempts: Vec<ExtractAttempt> = Vec::new();
 
         // var pageCacheHtml = page.innerHTML;
+        //TODO: Add page cache
 
         loop {
             //   var stripUnlikelyCandidates = this._flagIsActive(this.FLAG_STRIP_UNLIKELYS);
@@ -2007,11 +2003,21 @@ impl Readability {
                 parse_successful = false;
                 if self.flag_is_active(FLAG_STRIP_UNLIKELYS) {
                     self.remove_flag(FLAG_STRIP_UNLIKELYS);
+                    attempts.push(ExtractAttempt::new(article_content.clone(), text_length));
                 } else if self.flag_is_active(FLAG_WEIGHT_CLASSES) {
                     self.remove_flag(FLAG_WEIGHT_CLASSES);
+                    attempts.push(ExtractAttempt::new(article_content.clone(), text_length));
                 } else if self.flag_is_active(FLAG_CLEAN_CONDITIONALLY) {
                     self.remove_flag(FLAG_CLEAN_CONDITIONALLY);
+                    attempts.push(ExtractAttempt::new(article_content.clone(), text_length));
                 } else {
+                    attempts.push(ExtractAttempt::new(article_content.clone(), text_length));
+                    attempts.sort_by(|a, b| b.length.partial_cmp(&a.length).unwrap());
+                    if attempts.first().as_ref().unwrap().length == 0 {
+                        println!("Unable to extract content");
+                        break;
+                    }
+                    article_content = attempts[0].article.clone();
                     parse_successful = true;
                 }
             }
@@ -2037,11 +2043,23 @@ impl Readability {
                 self.article_node = Some(article_content);
                 return;
             }
-            // TODO: Remove this
-            break;
         }
     }
 }
+
+/// This represents the article node extracted after running the grab_article method
+#[derive(Debug)]
+struct ExtractAttempt {
+    article: NodeRef,
+    length: usize,
+}
+
+impl ExtractAttempt {
+    pub fn new(article: NodeRef, length: usize) -> Self {
+        ExtractAttempt { article, length }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct MetaData {
     byline: Option<String>,
@@ -3651,6 +3669,7 @@ characters. For that reason, this <p> tag could not be a byline because it's too
                 <img id="ex-3" src="../images/2.jpg" alt="Ex 3">
                 <img id="ex-4" src="./images/1.jpg" alt="Ex 4">
                 <img id="ex-5" src="https://images.com/images/1.jpg" alt="Ex 5">
+                <img id="ex-6" src="/images/1.jpg" alt="Ex 6">
                 <p><a href="#ex-1">First image</a></p>
             </body>
         </html>
@@ -3695,6 +3714,13 @@ characters. For that reason, this <p> tag could not be a byline because it's too
         let node_attrs = node.attributes.borrow();
         assert_eq!(
             Some("https://images.com/images/1.jpg"),
+            node_attrs.get("src")
+        );
+
+        let node = doc.root_node.select_first("img#ex-6").unwrap();
+        let node_attrs = node.attributes.borrow();
+        assert_eq!(
+            Some("https://example.image.com/images/1.jpg"),
             node_attrs.get("src")
         );
 
