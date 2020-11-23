@@ -2,6 +2,7 @@
 extern crate lazy_static;
 
 use std::fs::File;
+use std::path::Path;
 
 use async_std::{fs::create_dir, fs::remove_dir_all, task};
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
@@ -49,15 +50,17 @@ fn download(urls: Vec<String>) {
             let mut extractor = Extractor::from_html(&html);
             extractor.extract_content(&url);
             if extractor.article().is_some() {
-                create_dir("res/")
-                    .await
-                    .expect("Unable to create res/ output folder");
+                if !Path::new("res/").exists() {
+                    create_dir("res/")
+                        .await
+                        .expect("Unable to create res/ output folder");
+                }
                 extractor
                     .download_images(&Url::parse(&url).unwrap())
                     .await
                     .expect("Unable to download images");
-                let mut out_file =
-                    File::create(format!("{}.epub", extractor.metadata().title())).unwrap();
+                let file_name = format!("{}.epub", extractor.metadata().title());
+                let mut out_file = File::create(&file_name).unwrap();
                 let mut html_buf = Vec::new();
                 extractor
                     .article()
@@ -84,6 +87,7 @@ fn download(urls: Vec<String>) {
                 epub.generate(&mut out_file).unwrap();
                 println!("Cleaning up");
                 remove_dir_all("res/").await.unwrap();
+                println!("Created {:?}", file_name);
             }
         }
     })
