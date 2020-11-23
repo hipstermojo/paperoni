@@ -66,9 +66,10 @@ fn download(urls: Vec<String>) {
                     .replace_all(html_buf, "$tag/>");
                 let mut epub = EpubBuilder::new(ZipLibrary::new().unwrap()).unwrap();
                 if let Some(author) = extractor.metadata().byline() {
-                    epub.metadata("author", author).unwrap();
+                    epub.metadata("author", author.replace("&", "&amp;"))
+                        .unwrap();
                 }
-                epub.metadata("title", extractor.metadata().title())
+                epub.metadata("title", extractor.metadata().title().replace("&", "&amp;"))
                     .unwrap();
                 epub.add_content(EpubContent::new("code.xhtml", html_buf.as_bytes()))
                     .unwrap();

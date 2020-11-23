@@ -653,7 +653,12 @@ impl Readability {
                 })
                 .map(|node_ref| {
                     let node_attrs = node_ref.attributes.borrow();
-                    Url::parse(node_attrs.get("href").unwrap()).unwrap()
+                    let href = node_attrs.get("href").unwrap();
+                    if href.trim() == "/" {
+                        document_uri.join("/").unwrap()
+                    } else {
+                        Url::parse(href).unwrap()
+                    }
                 })
                 .next()
                 .unwrap_or(document_uri.clone());
