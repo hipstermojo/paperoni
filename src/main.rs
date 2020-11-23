@@ -2,9 +2,8 @@
 extern crate lazy_static;
 
 use std::fs::File;
-use std::path::Path;
 
-use async_std::{fs::create_dir, fs::remove_dir_all, task};
+use async_std::task;
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 use structopt::StructOpt;
 use url::Url;
@@ -50,11 +49,6 @@ fn download(urls: Vec<String>) {
             let mut extractor = Extractor::from_html(&html);
             extractor.extract_content(&url);
             if extractor.article().is_some() {
-                if !Path::new("res/").exists() {
-                    create_dir("res/")
-                        .await
-                        .expect("Unable to create res/ output folder");
-                }
                 extractor
                     .download_images(&Url::parse(&url).unwrap())
                     .await
@@ -79,14 +73,14 @@ fn download(urls: Vec<String>) {
                 epub.add_content(EpubContent::new("code.xhtml", html_buf.as_bytes()))
                     .unwrap();
                 for img in extractor.img_urls {
-                    let file_path = format!("{}", &img.0);
+                    let mut file_path = std::env::temp_dir();
+                    file_path.push(&img.0);
 
-                    let img_buf = File::open(file_path).expect("Can't read file");
-                    epub.add_resource(img.0, img_buf, img.1.unwrap()).unwrap();
+                    let img_buf = File::open(&file_path).expect("Can't read file");
+                    epub.add_resource(file_path.file_name().unwrap(), img_buf, img.1.unwrap())
+                        .unwrap();
                 }
                 epub.generate(&mut out_file).unwrap();
-                println!("Cleaning up");
-                remove_dir_all("res/").await.unwrap();
                 println!("Created {:?}", file_name);
             }
         }
