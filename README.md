@@ -29,7 +29,7 @@ This extractor retrieves a possible article using a port of the [Mozilla Readabi
 
 This program is still in alpha so a number of things currently break:
 
-- Links with redirects will crash the program as it has no redirect logic.
+- Certain links with redirects can't be extracted. Such links include urls that are proxying Medium.
 - Websites that only run with JavaScript cannot be extracted.
 - Website articles that cannot be extracted by Readability cannot be extracted by Paperoni either.
 
