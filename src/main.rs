@@ -56,14 +56,9 @@ fn download(urls: Vec<String>) {
                 let file_name = format!("{}.epub", extractor.metadata().title());
                 let mut out_file = File::create(&file_name).unwrap();
                 let mut html_buf = Vec::new();
-                extractor
-                    .article()
-                    .unwrap()
-                    .serialize(&mut html_buf)
-                    .expect("Unable to serialize");
+                extractor::serialize_to_xhtml(extractor.article().unwrap(), &mut html_buf)
+                    .expect("Unable to serialize to xhtml");
                 let html_buf = std::str::from_utf8(&html_buf).unwrap();
-                let html_buf = moz_readability::regexes::REPLACE_SELF_CLOSING_REGEX
-                    .replace_all(html_buf, "$tag/>");
                 let mut epub = EpubBuilder::new(ZipLibrary::new().unwrap()).unwrap();
                 if let Some(author) = extractor.metadata().byline() {
                     epub.metadata("author", author.replace("&", "&amp;"))
