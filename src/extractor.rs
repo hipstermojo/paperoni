@@ -74,7 +74,11 @@ impl Extractor {
             let abs_url = get_absolute_url(&img_url, article_origin);
 
             async_download_tasks.push(task::spawn(async move {
-                let mut img_response = surf::get(&abs_url).await.expect("Unable to retrieve file");
+                let mut img_response = surf::Client::new()
+                    .with(surf::middleware::Redirect::default())
+                    .get(&abs_url)
+                    .await
+                    .expect("Unable to retrieve file");
                 let img_content: Vec<u8> = img_response.body_bytes().await.unwrap();
                 let img_mime = img_response
                     .content_type()

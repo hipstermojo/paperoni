@@ -23,24 +23,26 @@ fn main() {
 
 type HTMLResource = (String, String);
 
-async fn fetch_url(url: &str) -> HTMLResource {
+async fn fetch_url(url: &str) -> Result<HTMLResource, Box<dyn std::error::Error>> {
     let client = surf::Client::new();
     println!("Fetching...");
-    // TODO: Add middleware for following redirects
-    (
-        url.to_string(),
-        client
-            .get(url)
-            .recv_string()
-            .await
-            .expect("Unable to fetch URL"),
-    )
+    let mut res = client
+        .with(surf::middleware::Redirect::default())
+        .get(url)
+        .send()
+        .await
+        .expect(&format!("Unable to fetch {}", url));
+    if res.status() == 200 {
+        Ok((url.to_string(), res.body_string().await?))
+    } else {
+        Err("Request failed to return HTTP 200".into())
+    }
 }
 
 fn download(urls: Vec<String>) {
     let mut async_url_tasks = Vec::with_capacity(urls.len());
     for url in urls {
-        async_url_tasks.push(task::spawn(async move { fetch_url(&url).await }));
+        async_url_tasks.push(task::spawn(async move { fetch_url(&url).await.unwrap() }));
     }
     task::block_on(async {
         for url_task in async_url_tasks {
