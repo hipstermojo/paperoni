@@ -5,7 +5,6 @@ use std::fs::File;
 
 use async_std::task;
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
-use structopt::StructOpt;
 use url::Url;
 
 mod cli;
@@ -14,10 +13,11 @@ mod moz_readability;
 
 use extractor::Extractor;
 fn main() {
-    let opt = cli::Opts::from_args();
-    if !opt.urls.is_empty() {
-        println!("Downloading single article");
-        download(opt.urls);
+    let app = cli::cli_init();
+    let arg_matches = app.get_matches();
+    if let Some(vals) = arg_matches.values_of("urls") {
+        let urls = vals.map(|val| val.to_string()).collect::<Vec<_>>();
+        download(urls);
     }
 }
 
