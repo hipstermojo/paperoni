@@ -653,7 +653,12 @@ impl Readability {
                 })
                 .map(|node_ref| {
                     let node_attrs = node_ref.attributes.borrow();
-                    Url::parse(node_attrs.get("href").unwrap()).unwrap()
+                    let href = node_attrs.get("href").unwrap();
+                    if href.trim() == "/" {
+                        document_uri.join("/").unwrap()
+                    } else {
+                        Url::parse(href).unwrap()
+                    }
                 })
                 .next()
                 .unwrap_or(document_uri.clone());
@@ -758,14 +763,66 @@ impl Readability {
     }
 
     /// Converts an inline CSS string to a [HashMap] of property and value(s)
-    fn inline_css_str_to_map(css_str: &str) -> HashMap<&str, &str> {
-        css_str
-            .split(";")
-            .filter(|split_str| !split_str.trim().is_empty())
-            .map(|str_pair| {
-                let mut vals = str_pair.split(":");
-                (vals.next().unwrap().trim(), vals.next().unwrap().trim())
-            })
+    fn inline_css_str_to_map(css_str: &str) -> HashMap<String, String> {
+        enum State {
+            ReadProp,
+            ReadVal,
+            ReadQuot,
+            ReadDquot,
+        }
+        let mut decl: (Option<String>, Option<String>) = (None, None);
+        let mut chars = css_str.chars();
+        let mut state = State::ReadProp;
+        let mut token = String::new();
+        let mut tokens = vec![];
+        while let Some(c) = chars.next() {
+            match state {
+                State::ReadProp => {
+                    if c != ':' {
+                        token.push(c);
+                    } else {
+                        state = State::ReadVal;
+                        decl.0 = Some(token.trim().to_string());
+                        token.clear();
+                    }
+                }
+                State::ReadVal => {
+                    if c == '\'' {
+                        state = State::ReadQuot;
+                        token.push(c);
+                    } else if c == '"' {
+                        state = State::ReadDquot;
+                        token.push(c);
+                    } else if c == ';' {
+                        state = State::ReadProp;
+                        decl.1 = Some(token.trim().to_string());
+                        tokens.push(decl.clone());
+                        token.clear();
+                    } else {
+                        token.push(c);
+                    }
+                }
+                State::ReadQuot => {
+                    token.push(c);
+                    if c == '\'' {
+                        state = State::ReadVal;
+                    }
+                }
+                State::ReadDquot => {
+                    token.push(c);
+                    if c == '"' {
+                        state = State::ReadVal;
+                    }
+                }
+            }
+        }
+        if !token.is_empty() {
+            decl.1 = Some(token.trim().to_string());
+            tokens.push(decl);
+        }
+        tokens
+            .into_iter()
+            .map(|tok_pair| (tok_pair.0.unwrap(), tok_pair.1.unwrap()))
             .collect()
     }
 
@@ -2394,18 +2451,19 @@ mod test {
         use std::collections::HashMap;
         let css_str = "display: flex; height: 200px; width: 250px; justify-content: center; align-items: center; border: 2px solid black";
         let mut css_map = HashMap::new();
-        css_map.insert("display", "flex");
-        css_map.insert("height", "200px");
-        css_map.insert("width", "250px");
-        css_map.insert("justify-content", "center");
-        css_map.insert("align-items", "center");
-        css_map.insert("border", "2px solid black");
+        css_map.insert("display".to_string(), "flex".to_string());
+        css_map.insert("height".to_string(), "200px".to_string());
+        css_map.insert("width".to_string(), "250px".to_string());
+        css_map.insert("justify-content".to_string(), "center".to_string());
+        css_map.insert("align-items".to_string(), "center".to_string());
+        css_map.insert("border".to_string(), "2px solid black".to_string());
 
         let css_str_to_vec = Readability::inline_css_str_to_map(css_str);
         assert_eq!(css_map, css_str_to_vec);
         let mut css_map = HashMap::new();
-        css_map.insert("color", "red");
-        assert_eq!(css_map, Readability::inline_css_str_to_map("color: red;"));
+        css_map.insert("color".to_string(), "red".to_string());
+        css_map.insert("background-image".to_string(), "url('data:image/jpeg;base64,/wgARCAALABQDASIAAhEBAxEB/8QAFwABAQEBAAAAAAAAAAAAAAAAAgADBP/')".to_string());
+        assert_eq!(css_map, Readability::inline_css_str_to_map("color: red;background-image: url('data:image/jpeg;base64,/wgARCAALABQDASIAAhEBAxEB/8QAFwABAQEBAAAAAAAAAAAAAAAAAgADBP/')"));
     }
 
     #[test]

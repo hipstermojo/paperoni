@@ -1,13 +1,21 @@
-use structopt::StructOpt;
+use clap::{App, AppSettings, Arg};
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "paperoni")]
-/// Paperoni is an article downloader.
-///
-/// It takes a url and downloads the article content from it and
-/// saves it to an epub.
-pub struct Opts {
-    // #[structopt(conflicts_with("links"))]
-    /// Url of a web article
-    pub urls: Vec<String>,
+pub fn cli_init() -> App<'static, 'static> {
+    App::new("paperoni")
+        .settings(&[
+            AppSettings::ArgRequiredElseHelp,
+            AppSettings::UnifiedHelpMessage,
+        ])
+        .version("0.1.0-alpha1")
+        .about(
+            "
+Paperoni is an article downloader.
+It takes a url and downloads the article content from it and saves it to an epub.
+        ",
+        )
+        .arg(
+            Arg::with_name("urls")
+                .help("Urls of web articles")
+                .multiple(true),
+        )
 }

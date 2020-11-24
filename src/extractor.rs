@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use async_std::fs::File;
 use async_std::io::prelude::*;
 use async_std::task;
@@ -7,6 +9,10 @@ use url::Url;
 use crate::moz_readability::{MetaData, Readability};
 
 pub type ResourceInfo = (String, Option<String>);
+
+lazy_static! {
+    static ref ESC_SEQ_REGEX: regex::Regex = regex::Regex::new(r"(&|<|>)").unwrap();
+}
 
 pub struct Extractor {
     article: Option<NodeRef>,
@@ -62,22 +68,27 @@ impl Extractor {
     pub async fn download_images(&mut self, article_origin: &Url) -> async_std::io::Result<()> {
         let mut async_download_tasks = Vec::with_capacity(self.img_urls.len());
         self.extract_img_urls();
-        println!("Downloading images to res/");
+        println!("Downloading images...");
         for img_url in &self.img_urls {
             let img_url = img_url.0.clone();
             let abs_url = get_absolute_url(&img_url, article_origin);
+
             async_download_tasks.push(task::spawn(async move {
-                let mut img_response = surf::get(&abs_url).await.expect("Unable to retrieve file");
+                let mut img_response = surf::Client::new()
+                    .with(surf::middleware::Redirect::default())
+                    .get(&abs_url)
+                    .await
+                    .expect("Unable to retrieve file");
                 let img_content: Vec<u8> = img_response.body_bytes().await.unwrap();
                 let img_mime = img_response
-                    .header("Content-Type")
-                    .map(|header| header.to_string());
+                    .content_type()
+                    .map(|mime| mime.essence().to_string());
                 let img_ext = img_response
-                    .header("Content-Type")
-                    .and_then(map_mime_type_to_ext)
+                    .content_type()
+                    .map(|mime| map_mime_subtype_to_ext(mime.subtype()).to_string())
                     .unwrap();
-
-                let img_path = format!("res/{}{}", hash_url(&abs_url), &img_ext);
+                let mut img_path = std::env::temp_dir();
+                img_path.push(format!("{}.{}", hash_url(&abs_url), &img_ext));
                 let mut img_file = File::create(&img_path)
                     .await
                     .expect("Unable to create file");
@@ -86,7 +97,19 @@ impl Extractor {
                     .await
                     .expect("Unable to save to file");
 
-                (img_url, img_path, img_mime)
+                (
+                    img_url,
+                    img_path
+                        .file_name()
+                        .map(|os_str_name| {
+                            os_str_name
+                                .to_str()
+                                .expect("Unable to get image file name")
+                                .to_string()
+                        })
+                        .unwrap(),
+                    img_mime,
+                )
             }));
         }
 
@@ -123,21 +146,15 @@ fn hash_url(url: &str) -> String {
     format!("{:x}", md5::compute(url.as_bytes()))
 }
 
-/// Handles getting the extension from a given MIME type. The extension starts with a dot
-fn map_mime_type_to_ext(mime_type: &str) -> Option<String> {
-    mime_type
-        .split("/")
-        .last()
-        .map(|format| {
-            if format == ("svg+xml") {
-                return "svg";
-            } else if format == "x-icon" {
-                "ico"
-            } else {
-                format
-            }
-        })
-        .map(|format| String::from(".") + format)
+/// Handles getting the extension from a given MIME subtype.
+fn map_mime_subtype_to_ext(subtype: &str) -> &str {
+    if subtype == ("svg+xml") {
+        return "svg";
+    } else if subtype == "x-icon" {
+        "ico"
+    } else {
+        subtype
+    }
 }
 
 fn get_absolute_url(url: &str, request_url: &Url) -> String {
@@ -156,6 +173,56 @@ fn get_absolute_url(url: &str, request_url: &Url) -> String {
     } else {
         request_url.join(url).unwrap().into_string()
     }
+}
+
+/// Serializes a NodeRef to a string that is XHTML compatible
+/// The only DOM nodes serialized are Text and Element nodes
+pub fn serialize_to_xhtml<W: std::io::Write>(
+    node_ref: &NodeRef,
+    mut w: &mut W,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut escape_map = HashMap::new();
+    escape_map.insert("<", "&lt;");
+    escape_map.insert(">", "&gt;");
+    escape_map.insert("&", "&amp;");
+    for edge in node_ref.traverse_inclusive() {
+        match edge {
+            kuchiki::iter::NodeEdge::Start(n) => match n.data() {
+                kuchiki::NodeData::Text(rc_text) => {
+                    let text = rc_text.borrow();
+                    let esc_text = ESC_SEQ_REGEX
+                        .replace_all(&text, |captures: &regex::Captures| escape_map[&captures[1]]);
+                    write!(&mut w, "{}", esc_text)?;
+                }
+                kuchiki::NodeData::Element(elem_data) => {
+                    let attrs = elem_data.attributes.borrow();
+                    let attrs_str = attrs
+                        .map
+                        .iter()
+                        .map(|(k, v)| {
+                            format!(
+                                "{}=\"{}\"",
+                                k.local,
+                                ESC_SEQ_REGEX
+                                    .replace_all(&v.value, |captures: &regex::Captures| {
+                                        escape_map[&captures[1]]
+                                    })
+                            )
+                        })
+                        .fold("".to_string(), |acc, val| acc + " " + &val);
+                    write!(&mut w, "<{}{}>", &elem_data.name.local, attrs_str)?;
+                }
+                _ => (),
+            },
+            kuchiki::iter::NodeEdge::End(n) => match n.data() {
+                kuchiki::NodeData::Element(elem_data) => {
+                    write!(&mut w, "</{}>", &elem_data.name.local)?;
+                }
+                _ => (),
+            },
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -204,23 +271,15 @@ mod test {
 
     #[test]
     fn test_map_mime_type_to_ext() {
-        let mime_types = vec![
-            "image/apng",
-            "image/bmp",
-            "image/gif",
-            "image/x-icon",
-            "image/jpeg",
-            "image/png",
-            "image/svg+xml",
-            "image/tiff",
-            "image/webp",
+        let mime_subtypes = vec![
+            "apng", "bmp", "gif", "x-icon", "jpeg", "png", "svg+xml", "tiff", "webp",
         ];
-        let exts = mime_types
+        let exts = mime_subtypes
             .into_iter()
-            .map(|mime_type| map_mime_type_to_ext(mime_type).unwrap())
+            .map(|mime_type| map_mime_subtype_to_ext(mime_type))
             .collect::<Vec<_>>();
         assert_eq!(
-            vec![".apng", ".bmp", ".gif", ".ico", ".jpeg", ".png", ".svg", ".tiff", ".webp"],
+            vec!["apng", "bmp", "gif", "ico", "jpeg", "png", "svg", "tiff", "webp"],
             exts
         );
     }

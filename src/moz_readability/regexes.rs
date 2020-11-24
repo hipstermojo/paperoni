@@ -132,8 +132,4 @@ lazy_static! {
     pub static ref REPLACE_END_SEPARATOR_REGEX: Regex =
         Regex::new(r"(?i)[^\|\-\\/>»]*[\|\-\\/>»](?P<end>.*)").unwrap();
     pub static ref REPLACE_MULTI_SEPARATOR_REGEX: Regex = Regex::new(r"[\|\-\\/>»]+").unwrap();
-    pub static ref REPLACE_SELF_CLOSING_REGEX: Regex = Regex::new(
-        r#"(?P<tag><(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)(?: [a-z\-]+=["'][\sa-zA-Z0-9\./\-_#]+["']|[a-z\-]+)*)>"#
-    )
-    .unwrap();
 }
