@@ -55,7 +55,14 @@ fn download(urls: Vec<String>) {
                     .download_images(&Url::parse(&url).unwrap())
                     .await
                     .expect("Unable to download images");
-                let file_name = format!("{}.epub", extractor.metadata().title());
+                let file_name = format!(
+                    "{}.epub",
+                    extractor
+                        .metadata()
+                        .title()
+                        .replace("/", " ")
+                        .replace("\\", " ")
+                );
                 let mut out_file = File::create(&file_name).unwrap();
                 let mut html_buf = Vec::new();
                 extractor::serialize_to_xhtml(extractor.article().unwrap(), &mut html_buf)
@@ -68,7 +75,7 @@ fn download(urls: Vec<String>) {
                 }
                 epub.metadata("title", extractor.metadata().title().replace("&", "&amp;"))
                     .unwrap();
-                epub.add_content(EpubContent::new("code.xhtml", html_buf.as_bytes()))
+                epub.add_content(EpubContent::new("index.xhtml", html_buf.as_bytes()))
                     .unwrap();
                 for img in extractor.img_urls {
                     let mut file_path = std::env::temp_dir();
