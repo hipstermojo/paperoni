@@ -11,7 +11,7 @@ use crate::moz_readability::{MetaData, Readability};
 pub type ResourceInfo = (String, Option<String>);
 
 lazy_static! {
-    static ref ESC_SEQ_REGEX: regex::Regex = regex::Regex::new(r"(&|<|>)").unwrap();
+    static ref ESC_SEQ_REGEX: regex::Regex = regex::Regex::new(r#"(&|<|>|'|")"#).unwrap();
 }
 
 pub struct Extractor {
@@ -56,7 +56,7 @@ impl Extractor {
             for img_ref in content_ref.select("img").unwrap() {
                 img_ref.as_node().as_element().map(|img_elem| {
                     img_elem.attributes.borrow().get("src").map(|img_url| {
-                        if !img_url.is_empty() {
+                        if !(img_url.is_empty() || img_url.starts_with("data:image")) {
                             self.img_urls.push((img_url.to_string(), None))
                         }
                     })
@@ -75,7 +75,9 @@ impl Extractor {
 
             async_download_tasks.push(task::spawn(async move {
                 let mut img_response = surf::Client::new()
-                    .with(surf::middleware::Redirect::default())
+                    // The middleware has been temporarily commented out because it happens
+                    // to affect downloading images when there is no redirecting
+                    // .with(surf::middleware::Redirect::default())
                     .get(&abs_url)
                     .await
                     .expect("Unable to retrieve file");
@@ -185,6 +187,8 @@ pub fn serialize_to_xhtml<W: std::io::Write>(
     escape_map.insert("<", "&lt;");
     escape_map.insert(">", "&gt;");
     escape_map.insert("&", "&amp;");
+    escape_map.insert("\"", "&quot;");
+    escape_map.insert("'", "&apos;");
     for edge in node_ref.traverse_inclusive() {
         match edge {
             kuchiki::iter::NodeEdge::Start(n) => match n.data() {
@@ -248,6 +252,7 @@ mod test {
                     <p>Some Lorem Ipsum text here</p>
                     <p>Observe this picture</p>
                     <img src="./img.jpg" alt="Random image">
+                    <img src="data:image/png;base64,lJGWEIUQOIQWIDYVIVEDYFOUYQFWD">
                 </article>
                 <footer>
                     <p>Made in HTML</p>
