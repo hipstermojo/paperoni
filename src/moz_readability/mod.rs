@@ -193,10 +193,7 @@ impl Readability {
                                 .borrow_mut()
                                 .insert(attr_name, prev_value.value.clone());
                         }
-                        // WARN: This assumes `next_element` returns an element node!!
-                        let inner_node_child =
-                            Self::next_element(inner_node_ref.first_child(), true);
-                        prev_elem.insert_after(inner_node_child.unwrap());
+                        prev_elem.insert_after(new_img.as_node().clone());
                         prev_elem.detach();
                     }
                 }

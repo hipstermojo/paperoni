@@ -6,7 +6,7 @@ pub fn cli_init() -> App<'static, 'static> {
             AppSettings::ArgRequiredElseHelp,
             AppSettings::UnifiedHelpMessage,
         ])
-        .version("0.2.1-alpha1")
+        .version("0.2.2-alpha1")
         .about(
             "
 Paperoni is an article downloader.

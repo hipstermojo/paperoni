@@ -68,7 +68,9 @@ impl Extractor {
     pub async fn download_images(&mut self, article_origin: &Url) -> async_std::io::Result<()> {
         let mut async_download_tasks = Vec::with_capacity(self.img_urls.len());
         self.extract_img_urls();
-        println!("Downloading images...");
+        if self.img_urls.len() > 0 {
+            println!("Downloading images...");
+        }
         for img_url in &self.img_urls {
             let img_url = img_url.0.clone();
             let abs_url = get_absolute_url(&img_url, article_origin);
@@ -129,6 +131,9 @@ impl Extractor {
                 .expect("Image node does not exist");
             let mut img_node = img_ref.attributes.borrow_mut();
             *img_node.get_mut("src").unwrap() = img_path.clone();
+            // srcset is removed because readers such as Foliate then fail to display
+            // the image already downloaded and stored in src
+            img_node.remove("srcset");
             self.img_urls.push((img_path, img_mime));
         }
         Ok(())
