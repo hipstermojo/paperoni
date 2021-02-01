@@ -18,4 +18,11 @@ It takes a url and downloads the article content from it and saves it to an epub
                 .help("Urls of web articles")
                 .multiple(true),
         )
+        .arg(
+            Arg::with_name("file")
+                .short("f")
+                .long("file")
+                .help("Input file containing links")
+                .takes_value(true),
+        )
 }

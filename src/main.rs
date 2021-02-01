@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use std::fs::File;
+use std::{fs::File, io::Read};
 
 use async_std::task;
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
@@ -15,8 +15,27 @@ use extractor::Extractor;
 fn main() {
     let app = cli::cli_init();
     let arg_matches = app.get_matches();
+    let mut urls: Vec<String> = match arg_matches.value_of("file") {
+        Some(file_name) => {
+            if let Ok(mut file) = File::open(file_name) {
+                let mut content = String::new();
+                match file.read_to_string(&mut content) {
+                    Ok(_) => content.lines().map(|line| line.to_owned()).collect(),
+                    Err(_) => vec![],
+                }
+            } else {
+                println!("Unable to open file: {}", file_name);
+                vec![]
+            }
+        }
+        None => vec![],
+    };
+
     if let Some(vals) = arg_matches.values_of("urls") {
-        let urls = vals.map(|val| val.to_string()).collect::<Vec<_>>();
+        urls.extend(vals.map(|val| val.to_string()));
+    }
+
+    if !urls.is_empty() {
         download(urls);
     }
 }

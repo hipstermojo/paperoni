@@ -12,7 +12,13 @@ Paperoni is a web article downloader written in Rust. The downloaded articles ar
 paperoni https://en.wikipedia.org/wiki/Pepperoni
 ```
 
-Paperoni also supports passing multiple links as arguments. If you are on a Unix-like OS, you can simply do something like this:
+Paperoni also supports passing multiple links as arguments. These can be read from a file using the `-f` flag.
+
+```sh
+paperoni -f links.txt
+```
+
+Alternatively, if you are on a Unix-like OS, you can simply do something like this:
 
 ```sh
 cat links.txt | xargs paperoni
