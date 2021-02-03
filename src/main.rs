@@ -20,7 +20,11 @@ fn main() {
             if let Ok(mut file) = File::open(file_name) {
                 let mut content = String::new();
                 match file.read_to_string(&mut content) {
-                    Ok(_) => content.lines().map(|line| line.to_owned()).collect(),
+                    Ok(_) => content
+                        .lines()
+                        .filter(|line| !line.is_empty())
+                        .map(|line| line.to_owned())
+                        .collect(),
                     Err(_) => vec![],
                 }
             } else {
@@ -32,7 +36,10 @@ fn main() {
     };
 
     if let Some(vals) = arg_matches.values_of("urls") {
-        urls.extend(vals.map(|val| val.to_string()));
+        urls.extend(
+            vals.filter(|val| !val.is_empty())
+                .map(|val| val.to_string()),
+        );
     }
 
     if !urls.is_empty() {
