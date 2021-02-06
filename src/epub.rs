@@ -20,11 +20,14 @@ pub fn generate_epub(extractor: Extractor) {
     let html_buf = std::str::from_utf8(&html_buf).unwrap();
     let mut epub = EpubBuilder::new(ZipLibrary::new().unwrap()).unwrap();
     if let Some(author) = extractor.metadata().byline() {
-        epub.metadata("author", author.replace("&", "&amp;"))
+        epub.metadata("author", replace_metadata_value(author))
             .unwrap();
     }
-    epub.metadata("title", extractor.metadata().title().replace("&", "&amp;"))
-        .unwrap();
+    epub.metadata(
+        "title",
+        replace_metadata_value(extractor.metadata().title()),
+    )
+    .unwrap();
     epub.add_content(EpubContent::new("index.xhtml", html_buf.as_bytes()))
         .unwrap();
     for img in extractor.img_urls {
@@ -37,4 +40,33 @@ pub fn generate_epub(extractor: Extractor) {
     }
     epub.generate(&mut out_file).unwrap();
     println!("Created {:?}", file_name);
+}
+
+/// Replaces characters that have to be escaped before adding to the epub's metadata
+fn replace_metadata_value(value: &str) -> String {
+    value
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+}
+
+#[cfg(test)]
+mod test {
+    use super::replace_metadata_value;
+
+    #[test]
+    fn test_replace_metadata_value() {
+        let mut value = "Lorem ipsum";
+        assert_eq!(replace_metadata_value(value), "Lorem ipsum");
+        value = "Memory safe > memory unsafe";
+        assert_eq!(
+            replace_metadata_value(value),
+            "Memory safe &gt; memory unsafe"
+        );
+        value = "Author Name <author@mail.example>";
+        assert_eq!(
+            replace_metadata_value(value),
+            "Author Name &lt;author@mail.example&gt;"
+        );
+    }
 }
