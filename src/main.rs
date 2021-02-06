@@ -1,7 +1,9 @@
 #[macro_use]
 extern crate lazy_static;
 
+use async_std::stream;
 use async_std::task;
+use futures::stream::StreamExt;
 use url::Url;
 
 mod cli;
@@ -12,33 +14,32 @@ mod extractor;
 mod http;
 mod moz_readability;
 
+use cli::AppConfig;
 use epub::generate_epub;
+use extractor::Extractor;
 use http::{download_images, fetch_url};
 
-use extractor::Extractor;
 fn main() {
     let app_config = cli::cli_init();
 
     if !app_config.urls().is_empty() {
-        download(app_config.urls().clone());
+        download(app_config);
     }
 }
 
-fn download(urls: Vec<String>) {
-    let mut async_url_tasks = Vec::with_capacity(urls.len());
-    for url in urls {
-        async_url_tasks.push(task::spawn(async move { fetch_url(&url).await }));
-    }
-
+fn download(app_config: AppConfig) {
     task::block_on(async {
-        for url_task in async_url_tasks {
-            match url_task.await {
+        let urls_iter = app_config.urls().iter().map(|url| fetch_url(url));
+        let mut responses = stream::from_iter(urls_iter).buffered(app_config.max_conn());
+        while let Some(fetch_result) = responses.next().await {
+            match fetch_result {
                 Ok((url, html)) => {
                     println!("Extracting");
                     let mut extractor = Extractor::from_html(&html);
                     extractor.extract_content(&url);
 
                     if extractor.article().is_some() {
+                        extractor.extract_img_urls();
                         download_images(&mut extractor, &Url::parse(&url).unwrap())
                             .await
                             .expect("Unable to download images");

@@ -62,11 +62,15 @@ It takes a url and downloads the article content from it and saves it to an epub
 
 pub struct AppConfig {
     urls: Vec<String>,
+    max_conn: usize,
 }
 
 impl AppConfig {
     fn new() -> Self {
-        Self { urls: vec![] }
+        Self {
+            urls: vec![],
+            max_conn: 8,
+        }
     }
 
     fn set_urls(&mut self, urls: Vec<String>) {
@@ -75,5 +79,8 @@ impl AppConfig {
 
     pub fn urls(&self) -> &Vec<String> {
         &self.urls
+    }
+    pub fn max_conn(&self) -> usize {
+        self.max_conn
     }
 }

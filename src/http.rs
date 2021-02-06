@@ -57,7 +57,6 @@ pub async fn download_images(
     extractor: &mut Extractor,
     article_origin: &Url,
 ) -> async_std::io::Result<()> {
-    extractor.extract_img_urls();
     let mut async_download_tasks = Vec::with_capacity(extractor.img_urls.len());
     if extractor.img_urls.len() > 0 {
         println!("Downloading images...");
