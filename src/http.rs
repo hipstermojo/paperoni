@@ -1,6 +1,6 @@
-use async_std::fs::File;
 use async_std::io::prelude::*;
-use async_std::task;
+use async_std::{fs::File, stream};
+use futures::StreamExt;
 use url::Url;
 
 use crate::extractor::Extractor;
@@ -57,22 +57,21 @@ pub async fn download_images(
     extractor: &mut Extractor,
     article_origin: &Url,
 ) -> async_std::io::Result<()> {
-    let mut async_download_tasks = Vec::with_capacity(extractor.img_urls.len());
     if extractor.img_urls.len() > 0 {
         println!("Downloading images...");
     }
-    for img_url in &extractor.img_urls {
-        let img_url = img_url.0.clone();
-        let abs_url = get_absolute_url(&img_url, article_origin);
 
-        async_download_tasks.push(task::spawn(async move {
-            let mut img_response = surf::Client::new()
-                // The middleware has been temporarily commented out because it happens
-                // to affect downloading images when there is no redirecting
-                // .with(surf::middleware::Redirect::default())
-                .get(&abs_url)
-                .await
-                .expect("Unable to retrieve file");
+    let imgs_req_iter = extractor
+        .img_urls
+        .iter()
+        .map(|(url, _)| {
+            (
+                url,
+                surf::Client::new().get(get_absolute_url(&url, article_origin)),
+            )
+        })
+        .map(|(url, req)| async move {
+            let mut img_response = req.await.expect("Unable to retrieve image");
             let img_content: Vec<u8> = img_response.body_bytes().await.unwrap();
             let img_mime = img_response
                 .content_type()
@@ -81,8 +80,9 @@ pub async fn download_images(
                 .content_type()
                 .map(|mime| map_mime_subtype_to_ext(mime.subtype()).to_string())
                 .unwrap();
+
             let mut img_path = std::env::temp_dir();
-            img_path.push(format!("{}.{}", hash_url(&abs_url), &img_ext));
+            img_path.push(format!("{}.{}", hash_url(&url), &img_ext));
             let mut img_file = File::create(&img_path)
                 .await
                 .expect("Unable to create file");
@@ -92,7 +92,7 @@ pub async fn download_images(
                 .expect("Unable to save to file");
 
             (
-                img_url,
+                url,
                 img_path
                     .file_name()
                     .map(|os_str_name| {
@@ -104,27 +104,33 @@ pub async fn download_images(
                     .unwrap(),
                 img_mime,
             )
-        }));
-    }
+        });
 
-    extractor.img_urls.clear();
+    // A utility closure used when update the value of an image source after downloading is successful
+    let replace_existing_img_src =
+        |img_item: (&String, String, Option<String>)| -> (String, Option<String>) {
+            let (img_url, img_path, img_mime) = img_item;
+            let img_ref = extractor
+                .article()
+                .as_mut()
+                .expect("Unable to get mutable ref")
+                .select_first(&format!("img[src='{}']", img_url))
+                .expect("Image node does not exist");
+            let mut img_node = img_ref.attributes.borrow_mut();
+            *img_node.get_mut("src").unwrap() = img_path.clone();
+            // srcset is removed because readers such as Foliate then fail to display
+            // the image already downloaded and stored in src
+            img_node.remove("srcset");
+            (img_path, img_mime)
+        };
 
-    for async_task in async_download_tasks {
-        let (img_url, img_path, img_mime) = async_task.await;
-        // Update the image sources
-        let img_ref = extractor
-            .article()
-            .as_mut()
-            .expect("Unable to get mutable ref")
-            .select_first(&format!("img[src='{}']", img_url))
-            .expect("Image node does not exist");
-        let mut img_node = img_ref.attributes.borrow_mut();
-        *img_node.get_mut("src").unwrap() = img_path.clone();
-        // srcset is removed because readers such as Foliate then fail to display
-        // the image already downloaded and stored in src
-        img_node.remove("srcset");
-        extractor.img_urls.push((img_path, img_mime));
-    }
+    extractor.img_urls = stream::from_iter(imgs_req_iter)
+        .buffered(10)
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(replace_existing_img_src)
+        .collect();
     Ok(())
 }
 

@@ -12,16 +12,22 @@ Paperoni is a web article downloader written in Rust. The downloaded articles ar
 paperoni https://en.wikipedia.org/wiki/Pepperoni
 ```
 
-Paperoni also supports passing multiple links as arguments. These can be read from a file using the `-f` flag.
+Paperoni also supports passing multiple links as arguments.
 
 ```sh
-paperoni -f links.txt
+paperoni https://en.wikipedia.org/wiki/Pepperoni https://en.wikipedia.org/wiki/Salami
 ```
 
 Alternatively, if you are on a Unix-like OS, you can simply do something like this:
 
 ```sh
 cat links.txt | xargs paperoni
+```
+
+These can also be read from a file using the `-f` flag.
+
+```sh
+paperoni -f links.txt
 ```
 
 ## How it works
@@ -33,11 +39,11 @@ This extractor retrieves a possible article using a port of the [Mozilla Readabi
 
 ## How it (currently) doesn't work
 
-This program is still in alpha so a number of things currently break:
+This program is still in alpha so a number of things won't work:
 
-- Certain links with redirects can't be extracted. Such links include urls that are proxying Medium.
 - Websites that only run with JavaScript cannot be extracted.
 - Website articles that cannot be extracted by Readability cannot be extracted by Paperoni either.
+- Code snippets on Medium articles that are lazy loaded will not appear in the EPUB.
 
 ## Running locally
 
