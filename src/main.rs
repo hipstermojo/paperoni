@@ -15,7 +15,7 @@ mod http;
 mod moz_readability;
 
 use cli::AppConfig;
-use epub::generate_epub;
+use epub::generate_epubs;
 use extractor::Extractor;
 use http::{download_images, fetch_url};
 
@@ -28,9 +28,10 @@ fn main() {
 }
 
 fn download(app_config: AppConfig) {
-    task::block_on(async {
+    let articles = task::block_on(async {
         let urls_iter = app_config.urls().iter().map(|url| fetch_url(url));
         let mut responses = stream::from_iter(urls_iter).buffered(app_config.max_conn());
+        let mut articles = Vec::new();
         while let Some(fetch_result) = responses.next().await {
             match fetch_result {
                 Ok((url, html)) => {
@@ -43,11 +44,13 @@ fn download(app_config: AppConfig) {
                         download_images(&mut extractor, &Url::parse(&url).unwrap())
                             .await
                             .expect("Unable to download images");
-                        generate_epub(extractor);
+                        articles.push(extractor);
                     }
                 }
                 Err(e) => println!("{}", e),
             }
         }
-    })
+        articles
+    });
+    generate_epubs(articles, app_config.merged());
 }

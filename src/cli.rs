@@ -26,6 +26,13 @@ It takes a url and downloads the article content from it and saves it to an epub
                 .long("file")
                 .help("Input file containing links")
                 .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("output_name")
+                .long("merge")
+                .help("Merge multiple articles into a single epub")
+                .long_help("Merge multiple articles into a single epub that will be given the name provided")
+                .takes_value(true),
         );
     let arg_matches = app.get_matches();
     let mut urls: Vec<String> = match arg_matches.value_of("file") {
@@ -57,12 +64,21 @@ It takes a url and downloads the article content from it and saves it to an epub
 
     let mut app_config = AppConfig::new();
     app_config.set_urls(urls);
+    if let Some(name) = arg_matches.value_of("output_name") {
+        let file_name = if name.ends_with(".epub") && name.len() > 5 {
+            name.to_owned()
+        } else {
+            name.to_owned() + ".epub"
+        };
+        app_config.set_merged(file_name);
+    }
     app_config
 }
 
 pub struct AppConfig {
     urls: Vec<String>,
     max_conn: usize,
+    merged: Option<String>,
 }
 
 impl AppConfig {
@@ -70,6 +86,7 @@ impl AppConfig {
         Self {
             urls: vec![],
             max_conn: 8,
+            merged: None,
         }
     }
 
@@ -77,10 +94,18 @@ impl AppConfig {
         self.urls.extend(urls);
     }
 
+    fn set_merged(&mut self, name: String) {
+        self.merged = Some(name);
+    }
+
     pub fn urls(&self) -> &Vec<String> {
         &self.urls
     }
     pub fn max_conn(&self) -> usize {
         self.max_conn
+    }
+
+    pub fn merged(&self) -> Option<&String> {
+        self.merged.as_ref()
     }
 }
