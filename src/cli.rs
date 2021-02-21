@@ -33,7 +33,12 @@ It takes a url and downloads the article content from it and saves it to an epub
                 .help("Merge multiple articles into a single epub")
                 .long_help("Merge multiple articles into a single epub that will be given the name provided")
                 .takes_value(true),
-        );
+        ).arg(
+            Arg::with_name("max_conn")
+                .long("max_conn")
+                .help("The maximum number of concurrent HTTP connections when downloading articles. Default is 8")
+                .long_help("The maximum number of concurrent HTTP connections when downloading articles. Default is 8.\nNOTE: It is advised to use as few connections as needed i.e between 1 and 50. Using more connections can end up overloading your network card with too many concurrent requests.")
+                .takes_value(true));
     let arg_matches = app.get_matches();
     let mut urls: Vec<String> = match arg_matches.value_of("file") {
         Some(file_name) => {
@@ -62,7 +67,14 @@ It takes a url and downloads the article content from it and saves it to an epub
         );
     }
 
-    let mut app_config = AppConfig::new();
+    let max_conn = arg_matches
+        .value_of("max_conn")
+        .map(|conn_str| conn_str.parse::<usize>().ok())
+        .flatten()
+        .map(|max| if max > 0 { max } else { 1 })
+        .unwrap_or(8);
+
+    let mut app_config = AppConfig::new(max_conn);
     app_config.set_urls(urls);
     if let Some(name) = arg_matches.value_of("output_name") {
         let file_name = if name.ends_with(".epub") && name.len() > 5 {
@@ -82,10 +94,10 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    fn new() -> Self {
+    fn new(max_conn: usize) -> Self {
         Self {
             urls: vec![],
-            max_conn: 8,
+            max_conn,
             merged: None,
         }
     }

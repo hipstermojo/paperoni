@@ -47,7 +47,7 @@ fn download(app_config: AppConfig) {
                         articles.push(extractor);
                     }
                 }
-                Err(e) => println!("{}", e),
+                Err(e) => eprintln!("{}", e),
             }
         }
         articles
