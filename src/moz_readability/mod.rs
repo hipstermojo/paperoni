@@ -462,7 +462,12 @@ impl Readability {
             .iter()
             .find(|key| values.contains_key(**key))
         {
-            values.get(*key).map(|title| title.to_owned()).unwrap()
+            let title = values.get(*key).map(|title| title.to_owned()).unwrap();
+            if title.is_empty() {
+                self.get_article_title()
+            } else {
+                title
+            }
         } else {
             self.get_article_title()
         };
