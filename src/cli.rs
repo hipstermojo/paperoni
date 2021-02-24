@@ -8,7 +8,7 @@ pub fn cli_init() -> AppConfig {
             AppSettings::ArgRequiredElseHelp,
             AppSettings::UnifiedHelpMessage,
         ])
-        .version("0.2.2-alpha1")
+        .version("0.3.0-alpha1")
         .about(
             "
 Paperoni is an article downloader.
