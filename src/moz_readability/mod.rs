@@ -799,6 +799,7 @@ impl Readability {
                         state = State::ReadProp;
                         decl.1 = Some(token.trim().to_string());
                         tokens.push(decl.clone());
+                        decl = (None, None);
                         token.clear();
                     } else {
                         token.push(c);
@@ -819,11 +820,18 @@ impl Readability {
             }
         }
         if !token.is_empty() {
-            decl.1 = Some(token.trim().to_string());
-            tokens.push(decl);
+            match state {
+                State::ReadVal => {
+                    decl.1 = Some(token.trim().to_string());
+                    tokens.push(decl);
+                }
+                _ => (),
+            }
         }
+
         tokens
             .into_iter()
+            .filter(|tok_pair| tok_pair.0.is_some() && tok_pair.1.is_some())
             .map(|tok_pair| (tok_pair.0.unwrap(), tok_pair.1.unwrap()))
             .collect()
     }
@@ -2460,12 +2468,24 @@ mod test {
         css_map.insert("align-items".to_string(), "center".to_string());
         css_map.insert("border".to_string(), "2px solid black".to_string());
 
-        let css_str_to_vec = Readability::inline_css_str_to_map(css_str);
-        assert_eq!(css_map, css_str_to_vec);
+        let css_str_to_map = Readability::inline_css_str_to_map(css_str);
+        assert_eq!(css_map, css_str_to_map);
         let mut css_map = HashMap::new();
         css_map.insert("color".to_string(), "red".to_string());
         css_map.insert("background-image".to_string(), "url('data:image/jpeg;base64,/wgARCAALABQDASIAAhEBAxEB/8QAFwABAQEBAAAAAAAAAAAAAAAAAgADBP/')".to_string());
         assert_eq!(css_map, Readability::inline_css_str_to_map("color: red;background-image: url('data:image/jpeg;base64,/wgARCAALABQDASIAAhEBAxEB/8QAFwABAQEBAAAAAAAAAAAAAAAAAgADBP/')"));
+
+        let empty_map = HashMap::new();
+        assert_eq!(empty_map, Readability::inline_css_str_to_map(" \n \t \r"));
+        assert_eq!(empty_map, Readability::inline_css_str_to_map("color"));
+
+        let mut css_map = HashMap::new();
+        css_map.insert("color".to_string(), "red".to_string());
+        css_map.insert("height".to_string(), "300px".to_string());
+        assert_eq!(
+            css_map,
+            Readability::inline_css_str_to_map("color: red;height: 300px;width")
+        );
     }
 
     #[test]
