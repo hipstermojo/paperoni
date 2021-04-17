@@ -1,6 +1,7 @@
 use std::fs::File;
 
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
+use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::{
     errors::PaperoniError,
@@ -11,6 +12,12 @@ pub fn generate_epubs(
     articles: Vec<Extractor>,
     merged: Option<&String>,
 ) -> Result<(), PaperoniError> {
+    let bar = ProgressBar::new(articles.len() as u64);
+    let style = ProgressStyle::default_bar().template(
+        "{spinner:.cyan} [{elapsed_precise}] {bar:40.white} {:>8} epub {pos}/{len:7} {msg:.green}",
+    );
+    bar.set_style(style);
+    bar.set_message("Generating epubs");
     match merged {
         Some(name) => {
             let mut epub = EpubBuilder::new(ZipLibrary::new()?)?;
@@ -33,6 +40,8 @@ pub fn generate_epubs(
                     .unwrap();
 
                     article.img_urls.iter().for_each(|img| {
+                        // TODO: Add error handling
+                        bar.inc(1);
                         let mut file_path = std::env::temp_dir();
                         file_path.push(&img.0);
 
@@ -48,6 +57,7 @@ pub fn generate_epubs(
                 });
             let mut out_file = File::create(&name).unwrap();
             epub.generate(&mut out_file)?;
+            bar.finish_with_message("Generated epub\n");
             println!("Created {:?}", name);
         }
         None => {
@@ -79,8 +89,10 @@ pub fn generate_epubs(
                     epub.add_resource(file_path.file_name().unwrap(), img_buf, img.1.unwrap())?;
                 }
                 epub.generate(&mut out_file)?;
-                println!("Created {:?}", file_name);
+                bar.inc(1);
+                // println!("Created {:?}", file_name);
             }
+            bar.finish_with_message("Generated epubs\n");
         }
     }
     Ok(())

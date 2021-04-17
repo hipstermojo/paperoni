@@ -4,6 +4,7 @@ extern crate lazy_static;
 use async_std::stream;
 use async_std::task;
 use futures::stream::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
 use url::Url;
 
 mod cli;
@@ -29,6 +30,12 @@ fn main() {
 }
 
 fn download(app_config: AppConfig) {
+    let bar = ProgressBar::new(app_config.urls().len() as u64);
+    let style = ProgressStyle::default_bar().template(
+        "{spinner:.cyan} [{elapsed_precise}] {bar:40.white} {:>8} link {pos}/{len:7} {msg:.yellow/white}",
+    );
+    bar.set_style(style);
+    bar.enable_steady_tick(500);
     let articles = task::block_on(async {
         let urls_iter = app_config.urls().iter().map(|url| fetch_html(url));
         let mut responses = stream::from_iter(urls_iter).buffered(app_config.max_conn());
@@ -36,15 +43,15 @@ fn download(app_config: AppConfig) {
         while let Some(fetch_result) = responses.next().await {
             match fetch_result {
                 Ok((url, html)) => {
-                    println!("Extracting");
+                    // println!("Extracting");
                     let mut extractor = Extractor::from_html(&html);
+                    bar.set_message("Extracting...");
                     extractor.extract_content(&url);
 
                     if extractor.article().is_some() {
                         extractor.extract_img_urls();
-
                         if let Err(img_errors) =
-                            download_images(&mut extractor, &Url::parse(&url).unwrap()).await
+                            download_images(&mut extractor, &Url::parse(&url).unwrap(), &bar).await
                         {
                             eprintln!(
                                 "{} image{} failed to download for {}",
@@ -58,9 +65,11 @@ fn download(app_config: AppConfig) {
                 }
                 Err(e) => eprintln!("{}", e),
             }
+            bar.inc(1);
         }
         articles
     });
+    bar.finish_with_message("Downloaded articles");
     match generate_epubs(articles, app_config.merged()) {
         Ok(_) => (),
         Err(e) => eprintln!("{}", e),

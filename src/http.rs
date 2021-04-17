@@ -1,6 +1,7 @@
 use async_std::io::prelude::*;
 use async_std::{fs::File, stream};
 use futures::StreamExt;
+use indicatif::ProgressBar;
 use url::Url;
 
 use crate::{errors::ErrorKind, errors::PaperoniError, extractor::Extractor};
@@ -9,7 +10,7 @@ type HTMLResource = (String, String);
 
 pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
     let client = surf::Client::new();
-    println!("Fetching...");
+    // println!("Fetching...");
 
     let mut redirect_count: u8 = 0;
     let base_url = Url::parse(&url)?;
@@ -56,10 +57,12 @@ pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
 pub async fn download_images(
     extractor: &mut Extractor,
     article_origin: &Url,
+    bar: &ProgressBar,
 ) -> Result<(), Vec<PaperoniError>> {
     if extractor.img_urls.len() > 0 {
-        println!("Downloading images...");
+        // println!("Downloading images...");
     }
+    let img_count = extractor.img_urls.len();
 
     let imgs_req_iter = extractor
         .img_urls
@@ -70,7 +73,9 @@ pub async fn download_images(
                 surf::Client::new().get(get_absolute_url(&url, article_origin)),
             )
         })
-        .map(|(url, req)| async move {
+        .enumerate()
+        .map(|(img_idx, (url, req))| async move {
+            bar.set_message(format!("Downloading images [{}/{}]", img_idx + 1, img_count).as_str());
             match req.await {
                 Ok(mut img_response) => {
                     // let mut img_response = req.await.expect("Unable to retrieve image");
