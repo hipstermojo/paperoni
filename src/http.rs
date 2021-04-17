@@ -7,7 +7,7 @@ use crate::{errors::ErrorKind, errors::PaperoniError, extractor::Extractor};
 
 type HTMLResource = (String, String);
 
-pub async fn fetch_url(url: &str) -> Result<HTMLResource, PaperoniError> {
+pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
     let client = surf::Client::new();
     println!("Fetching...");
 
