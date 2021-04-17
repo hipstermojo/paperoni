@@ -8,6 +8,7 @@ use url::Url;
 
 mod cli;
 mod epub;
+mod errors;
 mod extractor;
 /// This module is responsible for async HTTP calls for downloading
 /// the HTML content and images
@@ -41,9 +42,17 @@ fn download(app_config: AppConfig) {
 
                     if extractor.article().is_some() {
                         extractor.extract_img_urls();
-                        download_images(&mut extractor, &Url::parse(&url).unwrap())
-                            .await
-                            .expect("Unable to download images");
+
+                        if let Err(img_errors) =
+                            download_images(&mut extractor, &Url::parse(&url).unwrap()).await
+                        {
+                            eprintln!(
+                                "{} image{} failed to download for {}",
+                                img_errors.len(),
+                                if img_errors.len() > 1 { "s" } else { "" },
+                                url
+                            );
+                        }
                         articles.push(extractor);
                     }
                 }
@@ -52,5 +61,8 @@ fn download(app_config: AppConfig) {
         }
         articles
     });
-    generate_epubs(articles, app_config.merged());
+    match generate_epubs(articles, app_config.merged()) {
+        Ok(_) => (),
+        Err(e) => eprintln!("{}", e),
+    };
 }

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use kuchiki::{traits::*, NodeRef};
 
+use crate::errors::PaperoniError;
 use crate::moz_readability::{MetaData, Readability};
 
 pub type ResourceInfo = (String, Option<String>);
@@ -75,7 +76,7 @@ impl Extractor {
 pub fn serialize_to_xhtml<W: std::io::Write>(
     node_ref: &NodeRef,
     mut w: &mut W,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), PaperoniError> {
     let mut escape_map = HashMap::new();
     escape_map.insert("<", "&lt;");
     escape_map.insert(">", "&gt;");

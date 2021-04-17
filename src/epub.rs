@@ -2,12 +2,18 @@ use std::fs::File;
 
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 
-use crate::extractor::{self, Extractor};
+use crate::{
+    errors::PaperoniError,
+    extractor::{self, Extractor},
+};
 
-pub fn generate_epubs(articles: Vec<Extractor>, merged: Option<&String>) {
+pub fn generate_epubs(
+    articles: Vec<Extractor>,
+    merged: Option<&String>,
+) -> Result<(), PaperoniError> {
     match merged {
         Some(name) => {
-            let mut epub = EpubBuilder::new(ZipLibrary::new().unwrap()).unwrap();
+            let mut epub = EpubBuilder::new(ZipLibrary::new()?)?;
             epub.inline_toc();
             epub = articles
                 .iter()
@@ -41,12 +47,12 @@ pub fn generate_epubs(articles: Vec<Extractor>, merged: Option<&String>) {
                     epub
                 });
             let mut out_file = File::create(&name).unwrap();
-            epub.generate(&mut out_file).unwrap();
+            epub.generate(&mut out_file)?;
             println!("Created {:?}", name);
         }
         None => {
             for article in articles {
-                let mut epub = EpubBuilder::new(ZipLibrary::new().unwrap()).unwrap();
+                let mut epub = EpubBuilder::new(ZipLibrary::new()?)?;
                 let file_name = format!(
                     "{}.epub",
                     article
@@ -61,26 +67,23 @@ pub fn generate_epubs(articles: Vec<Extractor>, merged: Option<&String>) {
                     .expect("Unable to serialize to xhtml");
                 let html_str = std::str::from_utf8(&html_buf).unwrap();
                 if let Some(author) = article.metadata().byline() {
-                    epub.metadata("author", replace_metadata_value(author))
-                        .unwrap();
+                    epub.metadata("author", replace_metadata_value(author))?;
                 }
-                epub.metadata("title", replace_metadata_value(article.metadata().title()))
-                    .unwrap();
-                epub.add_content(EpubContent::new("index.xhtml", html_str.as_bytes()))
-                    .unwrap();
+                epub.metadata("title", replace_metadata_value(article.metadata().title()))?;
+                epub.add_content(EpubContent::new("index.xhtml", html_str.as_bytes()))?;
                 for img in article.img_urls {
                     let mut file_path = std::env::temp_dir();
                     file_path.push(&img.0);
 
                     let img_buf = File::open(&file_path).expect("Can't read file");
-                    epub.add_resource(file_path.file_name().unwrap(), img_buf, img.1.unwrap())
-                        .unwrap();
+                    epub.add_resource(file_path.file_name().unwrap(), img_buf, img.1.unwrap())?;
                 }
-                epub.generate(&mut out_file).unwrap();
+                epub.generate(&mut out_file)?;
                 println!("Created {:?}", file_name);
             }
         }
     }
+    Ok(())
 }
 
 /// Replaces characters that have to be escaped before adding to the epub's metadata
