@@ -12,46 +12,53 @@ pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
     let client = surf::Client::new();
     // println!("Fetching...");
 
-    let mut redirect_count: u8 = 0;
-    let base_url = Url::parse(&url)?;
-    let mut url = base_url.clone();
-    while redirect_count < 5 {
-        redirect_count += 1;
-        let req = surf::get(&url);
-        let mut res = client.send(req).await?;
-        if res.status().is_redirection() {
-            if let Some(location) = res.header(surf::http::headers::LOCATION) {
-                match Url::parse(location.last().as_str()) {
-                    Ok(valid_url) => url = valid_url,
-                    Err(e) => match e {
-                        url::ParseError::RelativeUrlWithoutBase => {
-                            url = base_url.join(location.last().as_str())?
-                        }
-                        e => return Err(e.into()),
-                    },
-                };
-            }
-        } else if res.status().is_success() {
-            if let Some(mime) = res.content_type() {
-                if mime.essence() == "text/html" {
-                    return Ok((url.to_string(), res.body_string().await?));
-                } else {
-                    let msg = format!(
-                        "Invalid HTTP response. Received {} instead of text/html",
-                        mime.essence()
-                    );
+    let process_request = async {
+        let mut redirect_count: u8 = 0;
+        let base_url = Url::parse(&url)?;
+        let mut url = base_url.clone();
+        while redirect_count < 5 {
+            redirect_count += 1;
+            let req = surf::get(&url);
+            let mut res = client.send(req).await?;
+            if res.status().is_redirection() {
+                if let Some(location) = res.header(surf::http::headers::LOCATION) {
+                    match Url::parse(location.last().as_str()) {
+                        Ok(valid_url) => url = valid_url,
+                        Err(e) => match e {
+                            url::ParseError::RelativeUrlWithoutBase => {
+                                url = base_url.join(location.last().as_str())?
+                            }
+                            e => return Err(e.into()),
+                        },
+                    };
+                }
+            } else if res.status().is_success() {
+                if let Some(mime) = res.content_type() {
+                    if mime.essence() == "text/html" {
+                        return Ok((url.to_string(), res.body_string().await?));
+                    } else {
+                        let msg = format!(
+                            "Invalid HTTP response. Received {} instead of text/html",
+                            mime.essence()
+                        );
 
-                    return Err(ErrorKind::HTTPError(msg).into());
+                        return Err(ErrorKind::HTTPError(msg).into());
+                    }
+                } else {
+                    return Err(ErrorKind::HTTPError("Unknown HTTP response".to_owned()).into());
                 }
             } else {
-                return Err(ErrorKind::HTTPError("Unknown HTTP response".to_owned()).into());
+                let msg = format!("Request failed: HTTP {}", res.status());
+                return Err(ErrorKind::HTTPError(msg).into());
             }
-        } else {
-            let msg = format!("Request failed: HTTP {}", res.status());
-            return Err(ErrorKind::HTTPError(msg).into());
         }
-    }
-    Err(ErrorKind::HTTPError("Unable to fetch HTML".to_owned()).into())
+        Err(ErrorKind::HTTPError("Unable to fetch HTML".to_owned()).into())
+    };
+
+    process_request.await.map_err(|mut error: PaperoniError| {
+        error.set_article_source(url);
+        error
+    })
 }
 
 pub async fn download_images(
