@@ -1585,7 +1585,8 @@ impl Readability {
     /// Using a variety of metrics (content score, classname, element types), find the content that is most likely to be the stuff
     /// a user wants to read. Then return it wrapped up in a div.
     fn grab_article(&mut self) {
-        println!("Grabbing article");
+        // TODO: Add logging for this
+        // println!("Grabbing article");
         // var doc = this._doc;
         // var isPaging = (page !== null ? true: false);
         // page = page ? page : this._doc.body;

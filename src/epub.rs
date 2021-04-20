@@ -1,5 +1,7 @@
 use std::fs::File;
 
+use comfy_table::presets::{UTF8_FULL, UTF8_HORIZONTAL_BORDERS_ONLY};
+use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 use indicatif::{ProgressBar, ProgressStyle};
 
@@ -18,8 +20,17 @@ pub fn generate_epubs(
     );
     bar.set_style(style);
     bar.set_message("Generating epubs");
+    let mut base_table = Table::new();
+    base_table
+        .load_preset(UTF8_FULL)
+        .load_preset(UTF8_HORIZONTAL_BORDERS_ONLY)
+        .set_content_arrangement(ContentArrangement::Dynamic);
     match merged {
         Some(name) => {
+            base_table.set_header(vec![Cell::new("Table of Contents")
+                .add_attribute(Attribute::Bold)
+                .set_alignment(CellAlignment::Center)
+                .fg(Color::Green)]);
             let mut epub = EpubBuilder::new(ZipLibrary::new()?)?;
             epub.inline_toc();
             epub = articles
@@ -41,7 +52,6 @@ pub fn generate_epubs(
 
                     article.img_urls.iter().for_each(|img| {
                         // TODO: Add error handling
-                        bar.inc(1);
                         let mut file_path = std::env::temp_dir();
                         file_path.push(&img.0);
 
@@ -53,6 +63,8 @@ pub fn generate_epubs(
                         )
                         .unwrap();
                     });
+                    bar.inc(1);
+                    base_table.add_row(vec![article.metadata().title()]);
                     epub
                 });
             let mut out_file = File::create(&name).unwrap();
@@ -61,6 +73,13 @@ pub fn generate_epubs(
             println!("Created {:?}", name);
         }
         None => {
+            base_table
+                .set_header(vec![Cell::new("Downloaded articles")
+                    .add_attribute(Attribute::Bold)
+                    .set_alignment(CellAlignment::Center)
+                    .fg(Color::Green)])
+                .set_content_arrangement(ContentArrangement::Dynamic);
+
             for article in articles {
                 let mut epub = EpubBuilder::new(ZipLibrary::new()?)?;
                 let file_name = format!(
@@ -81,20 +100,28 @@ pub fn generate_epubs(
                 }
                 epub.metadata("title", replace_metadata_value(article.metadata().title()))?;
                 epub.add_content(EpubContent::new("index.xhtml", html_str.as_bytes()))?;
-                for img in article.img_urls {
+                for img in &article.img_urls {
                     let mut file_path = std::env::temp_dir();
                     file_path.push(&img.0);
 
                     let img_buf = File::open(&file_path).expect("Can't read file");
-                    epub.add_resource(file_path.file_name().unwrap(), img_buf, img.1.unwrap())?;
+                    epub.add_resource(
+                        file_path.file_name().unwrap(),
+                        img_buf,
+                        img.1.as_ref().unwrap(),
+                    )?;
                 }
                 epub.generate(&mut out_file)?;
                 bar.inc(1);
+
+                base_table.add_row(vec![article.metadata().title()]);
+
                 // println!("Created {:?}", file_name);
             }
             bar.finish_with_message("Generated epubs\n");
         }
     }
+    println!("{}", base_table);
     Ok(())
 }
 
