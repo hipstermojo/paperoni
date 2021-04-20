@@ -15,22 +15,24 @@ pub struct Extractor {
     article: Option<NodeRef>,
     pub img_urls: Vec<ResourceInfo>,
     readability: Readability,
+    pub url: String,
 }
 
 impl Extractor {
     /// Create a new instance of an HTML extractor given an HTML string
-    pub fn from_html(html_str: &str) -> Self {
+    pub fn from_html(html_str: &str, url: &str) -> Self {
         Extractor {
             article: None,
             img_urls: Vec::new(),
             readability: Readability::new(html_str),
+            url: url.to_string(),
         }
     }
 
     /// Locates and extracts the HTML in a document which is determined to be
     /// the source of the content
-    pub fn extract_content(&mut self, url: &str) {
-        self.readability.parse(url);
+    pub fn extract_content(&mut self) {
+        self.readability.parse(&self.url);
         if let Some(article_node_ref) = &self.readability.article_node {
             let template = r#"
             <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
@@ -157,8 +159,8 @@ mod test {
 
     #[test]
     fn test_extract_img_urls() {
-        let mut extractor = Extractor::from_html(TEST_HTML);
-        extractor.extract_content("http://example.com/");
+        let mut extractor = Extractor::from_html(TEST_HTML, "http://example.com/");
+        extractor.extract_content();
         extractor.extract_img_urls();
 
         assert!(extractor.img_urls.len() > 0);

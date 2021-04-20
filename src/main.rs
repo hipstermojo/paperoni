@@ -44,9 +44,9 @@ fn download(app_config: AppConfig) {
             match fetch_result {
                 Ok((url, html)) => {
                     // println!("Extracting");
-                    let mut extractor = Extractor::from_html(&html);
+                    let mut extractor = Extractor::from_html(&html, &url);
                     bar.set_message("Extracting...");
-                    extractor.extract_content(&url);
+                    extractor.extract_content();
 
                     if extractor.article().is_some() {
                         extractor.extract_img_urls();
