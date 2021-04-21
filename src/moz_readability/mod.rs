@@ -429,8 +429,7 @@ impl Readability {
                     let mut matches = None;
                     if let Some(property) = node_attr.get("property") {
                         matches = regexes::PROPERTY_REGEX.captures(property);
-                        if matches.is_some() {
-                            let captures = matches.as_ref().unwrap();
+                        if let Some(captures) = &matches {
                             for capture in captures.iter() {
                                 let mut name = capture.unwrap().as_str().to_lowercase();
                                 name = regexes::REPLACE_WHITESPACE_REGEX
@@ -564,7 +563,7 @@ impl Readability {
             .root_node
             .select_first("title")
             .map(|title| title.text_contents().trim().to_string())
-            .expect("This file has no <title> tag to extract a title from");
+            .unwrap_or("".to_string());
         let orig_title = cur_title.clone();
         let mut title_had_hierarchical_separators = false;
         let word_count = |s: &str| -> usize { s.split_whitespace().count() };
@@ -598,8 +597,8 @@ impl Readability {
             }
         } else if cur_title.len() > 150 || cur_title.len() < 15 {
             let mut h1_nodes = self.root_node.select("h1").unwrap();
-            let (_, h1_count) = h1_nodes.size_hint();
-            if Some(1) == h1_count {
+            let h1_count = self.root_node.select("h1").unwrap().count();
+            if h1_count == 1 {
                 cur_title = Self::get_inner_text(h1_nodes.next().unwrap().as_node(), None);
             }
         }
