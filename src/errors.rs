@@ -10,6 +10,8 @@ pub enum ErrorKind {
     IOError(String),
     #[error("[UTF8Error]: {0}")]
     UTF8Error(String),
+    #[error("[ReadabilityError]: {0}")]
+    ReadabilityError(String),
 }
 
 #[derive(Error, Debug)]

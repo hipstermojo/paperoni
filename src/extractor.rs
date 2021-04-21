@@ -31,8 +31,8 @@ impl Extractor {
 
     /// Locates and extracts the HTML in a document which is determined to be
     /// the source of the content
-    pub fn extract_content(&mut self) {
-        self.readability.parse(&self.url);
+    pub fn extract_content(&mut self) -> Result<(), PaperoniError> {
+        self.readability.parse(&self.url)?;
         if let Some(article_node_ref) = &self.readability.article_node {
             let template = r#"
             <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
@@ -47,6 +47,7 @@ impl Extractor {
             body.as_node().append(article_node_ref.clone());
             self.article = Some(doc);
         }
+        Ok(())
     }
 
     /// Traverses the DOM tree of the content and retrieves the IMG URLs
@@ -64,8 +65,11 @@ impl Extractor {
         }
     }
 
-    pub fn article(&self) -> Option<&NodeRef> {
-        self.article.as_ref()
+    /// Returns the extracted article [NodeRef]. It should only be called *AFTER* calling parse
+    pub fn article(&self) -> &NodeRef {
+        self.article.as_ref().expect(
+            "Article node doesn't exist. This may be because the document has not been parsed",
+        )
     }
 
     pub fn metadata(&self) -> &MetaData {
@@ -160,7 +164,9 @@ mod test {
     #[test]
     fn test_extract_img_urls() {
         let mut extractor = Extractor::from_html(TEST_HTML, "http://example.com/");
-        extractor.extract_content();
+        extractor
+            .extract_content()
+            .expect("Article extraction failed unexpectedly");
         extractor.extract_img_urls();
 
         assert!(extractor.img_urls.len() > 0);

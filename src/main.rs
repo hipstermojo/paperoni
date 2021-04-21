@@ -49,21 +49,26 @@ fn download(app_config: AppConfig) {
                     // println!("Extracting");
                     let mut extractor = Extractor::from_html(&html, &url);
                     bar.set_message("Extracting...");
-                    extractor.extract_content();
-
-                    if extractor.article().is_some() {
-                        extractor.extract_img_urls();
-                        if let Err(img_errors) =
-                            download_images(&mut extractor, &Url::parse(&url).unwrap(), &bar).await
-                        {
-                            eprintln!(
-                                "{} image{} failed to download for {}",
-                                img_errors.len(),
-                                if img_errors.len() > 1 { "s" } else { "" },
-                                url
-                            );
+                    match extractor.extract_content() {
+                        Ok(_) => {
+                            extractor.extract_img_urls();
+                            if let Err(img_errors) =
+                                download_images(&mut extractor, &Url::parse(&url).unwrap(), &bar)
+                                    .await
+                            {
+                                eprintln!(
+                                    "{} image{} failed to download for {}",
+                                    img_errors.len(),
+                                    if img_errors.len() > 1 { "s" } else { "" },
+                                    url
+                                );
+                            }
+                            articles.push(extractor);
                         }
-                        articles.push(extractor);
+                        Err(mut e) => {
+                            e.set_article_source(&url);
+                            errors.push(e);
+                        }
                     }
                 }
                 Err(e) => errors.push(e),

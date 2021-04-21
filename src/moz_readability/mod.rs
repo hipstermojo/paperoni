@@ -9,6 +9,8 @@ use kuchiki::{
 };
 use url::Url;
 
+use crate::errors::{ErrorKind, PaperoniError};
+
 const DEFAULT_CHAR_THRESHOLD: usize = 500;
 const FLAG_STRIP_UNLIKELYS: u32 = 0x1;
 const FLAG_WEIGHT_CLASSES: u32 = 0x2;
@@ -76,14 +78,15 @@ impl Readability {
             metadata: MetaData::new(),
         }
     }
-    pub fn parse(&mut self, url: &str) {
+    pub fn parse(&mut self, url: &str) -> Result<(), PaperoniError> {
         self.unwrap_no_script_tags();
         self.remove_scripts();
         self.prep_document();
         self.metadata = self.get_article_metadata();
         self.article_title = self.metadata.title.clone();
-        self.grab_article();
+        self.grab_article()?;
         self.post_process_content(url);
+        Ok(())
     }
 
     /// Recursively check if node is image, or if node contains exactly only one image
@@ -1584,7 +1587,7 @@ impl Readability {
 
     /// Using a variety of metrics (content score, classname, element types), find the content that is most likely to be the stuff
     /// a user wants to read. Then return it wrapped up in a div.
-    fn grab_article(&mut self) {
+    fn grab_article(&mut self) -> Result<(), PaperoniError> {
         // TODO: Add logging for this
         // println!("Grabbing article");
         // var doc = this._doc;
@@ -1593,8 +1596,7 @@ impl Readability {
         let page = self.root_node.select_first("body");
         if page.is_err() {
             // TODO:Have error logging for this
-            println!("Document has no <body>");
-            return;
+            return Err(ErrorKind::ReadabilityError("Document has no <body>".into()).into());
         }
         let page = page.unwrap();
         let mut attempts: Vec<ExtractAttempt> = Vec::new();
@@ -2084,8 +2086,10 @@ impl Readability {
                     attempts.push(ExtractAttempt::new(article_content.clone(), text_length));
                     attempts.sort_by(|a, b| b.length.partial_cmp(&a.length).unwrap());
                     if attempts.first().as_ref().unwrap().length == 0 {
-                        println!("Unable to extract content");
-                        break;
+                        return Err(ErrorKind::ReadabilityError(
+                            "Unable to extract content".into(),
+                        )
+                        .into());
                     }
                     article_content = attempts[0].article.clone();
                     parse_successful = true;
@@ -2111,7 +2115,7 @@ impl Readability {
                     false
                 });
                 self.article_node = Some(article_content);
-                return;
+                return Ok(());
             }
         }
     }

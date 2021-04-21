@@ -61,7 +61,7 @@ pub fn generate_epubs(
                 .fold(&mut epub, |epub, (idx, article)| {
                     let mut article_result = || -> Result<(), PaperoniError> {
                         let mut html_buf = Vec::new();
-                        extractor::serialize_to_xhtml(article.article().unwrap(), &mut html_buf)?;
+                        extractor::serialize_to_xhtml(article.article(), &mut html_buf)?;
                         let html_str = std::str::from_utf8(&html_buf)?;
                         epub.metadata("title", replace_metadata_value(name))?;
                         let section_name = article.metadata().title();
@@ -129,7 +129,7 @@ pub fn generate_epubs(
                     );
                     let mut out_file = File::create(&file_name).unwrap();
                     let mut html_buf = Vec::new();
-                    extractor::serialize_to_xhtml(article.article().unwrap(), &mut html_buf)
+                    extractor::serialize_to_xhtml(article.article(), &mut html_buf)
                         .expect("Unable to serialize to xhtml");
                     let html_str = std::str::from_utf8(&html_buf).unwrap();
                     if let Some(author) = article.metadata().byline() {

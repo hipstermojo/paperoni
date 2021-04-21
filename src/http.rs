@@ -141,8 +141,6 @@ pub async fn download_images(
             let (img_url, img_path, img_mime) = img_item;
             let img_ref = extractor
                 .article()
-                .as_mut()
-                .expect("Unable to get mutable ref")
                 .select_first(&format!("img[src='{}']", img_url))
                 .expect("Image node does not exist");
             let mut img_node = img_ref.attributes.borrow_mut();
