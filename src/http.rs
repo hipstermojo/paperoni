@@ -77,7 +77,9 @@ pub async fn download_images(
         .map(|(url, _)| {
             (
                 url,
-                surf::Client::new().get(get_absolute_url(&url, article_origin)),
+                surf::Client::new()
+                    .with(surf::middleware::Redirect::default())
+                    .get(get_absolute_url(&url, article_origin)),
             )
         })
         .enumerate()
