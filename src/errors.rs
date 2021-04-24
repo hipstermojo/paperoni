@@ -16,6 +16,53 @@ pub enum ErrorKind {
 
 #[derive(Error, Debug)]
 #[error("{kind}")]
+/// Used to represent errors from downloading images. Errors from here are used solely for debugging
+/// as they are considered recoverable.
+pub struct ImgError {
+    kind: ErrorKind,
+    url: Option<String>,
+}
+
+impl ImgError {
+    pub fn with_kind(kind: ErrorKind) -> Self {
+        ImgError { url: None, kind }
+    }
+
+    pub fn set_url(&mut self, url: &str) {
+        self.url = Some(url.to_string());
+    }
+
+    pub fn url(&self) -> &Option<String> {
+        &self.url
+    }
+}
+
+impl From<ErrorKind> for ImgError {
+    fn from(kind: ErrorKind) -> Self {
+        ImgError::with_kind(kind)
+    }
+}
+
+impl From<surf::Error> for ImgError {
+    fn from(err: surf::Error) -> Self {
+        ImgError::with_kind(ErrorKind::HTTPError(err.to_string()))
+    }
+}
+
+impl From<url::ParseError> for ImgError {
+    fn from(err: url::ParseError) -> Self {
+        ImgError::with_kind(ErrorKind::HTTPError(err.to_string()))
+    }
+}
+
+impl From<std::io::Error> for ImgError {
+    fn from(err: std::io::Error) -> Self {
+        ImgError::with_kind(ErrorKind::IOError(err.to_string()))
+    }
+}
+
+#[derive(Error, Debug)]
+#[error("{kind}")]
 pub struct PaperoniError {
     article_source: Option<String>,
     kind: ErrorKind,

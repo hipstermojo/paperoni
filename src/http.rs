@@ -5,8 +5,8 @@ use indicatif::ProgressBar;
 use log::{debug, info};
 use url::Url;
 
-use crate::{errors::ErrorKind, errors::PaperoniError, extractor::Extractor};
-
+use crate::errors::{ErrorKind, ImgError, PaperoniError};
+use crate::extractor::Extractor;
 type HTMLResource = (String, String);
 
 pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
@@ -76,7 +76,7 @@ pub async fn download_images(
     extractor: &mut Extractor,
     article_origin: &Url,
     bar: &ProgressBar,
-) -> Result<(), Vec<PaperoniError>> {
+) -> Result<(), Vec<ImgError>> {
     if extractor.img_urls.len() > 0 {
         debug!(
             "Downloading {} images for {}",
@@ -102,53 +102,62 @@ pub async fn download_images(
             bar.set_message(format!("Downloading images [{}/{}]", img_idx + 1, img_count).as_str());
             match req.await {
                 Ok(mut img_response) => {
-                    // let mut img_response = req.await.expect("Unable to retrieve image");
-                    let img_content: Vec<u8> = match img_response.body_bytes().await {
-                        Ok(bytes) => bytes,
-                        Err(e) => return Err(e.into()),
-                    };
-                    let img_mime = img_response
-                        .content_type()
-                        .map(|mime| mime.essence().to_string());
-                    let img_ext = match img_response
-                        .content_type()
-                        .map(|mime| map_mime_subtype_to_ext(mime.subtype()).to_string())
-                    {
-                        Some(mime_str) => mime_str,
-                        None => {
-                            return Err(ErrorKind::HTTPError(
-                                "Image has no Content-Type".to_owned(),
-                            )
-                            .into())
+                    let process_response = async {
+                        let img_content: Vec<u8> = match img_response.body_bytes().await {
+                            Ok(bytes) => bytes,
+                            Err(e) => return Err(e.into()),
+                        };
+                        let img_mime = img_response
+                            .content_type()
+                            .map(|mime| mime.essence().to_string());
+                        let img_ext = match img_response
+                            .content_type()
+                            .map(|mime| map_mime_subtype_to_ext(mime.subtype()).to_string())
+                        {
+                            Some(mime_str) => mime_str,
+                            None => {
+                                return Err(ErrorKind::HTTPError(
+                                    "Image has no Content-Type".to_owned(),
+                                )
+                                .into())
+                            }
+                        };
+
+                        let mut img_path = std::env::temp_dir();
+                        img_path.push(format!("{}.{}", hash_url(&url), &img_ext));
+                        let mut img_file = match File::create(&img_path).await {
+                            Ok(file) => file,
+                            Err(e) => return Err(e.into()),
+                        };
+                        match img_file.write_all(&img_content).await {
+                            Ok(_) => (),
+                            Err(e) => return Err(e.into()),
                         }
-                    };
 
-                    let mut img_path = std::env::temp_dir();
-                    img_path.push(format!("{}.{}", hash_url(&url), &img_ext));
-                    let mut img_file = match File::create(&img_path).await {
-                        Ok(file) => file,
-                        Err(e) => return Err(e.into()),
+                        Ok((
+                            url,
+                            img_path
+                                .file_name()
+                                .map(|os_str_name| {
+                                    os_str_name
+                                        .to_str()
+                                        .expect("Unable to get image file name")
+                                        .to_string()
+                                })
+                                .unwrap(),
+                            img_mime,
+                        ))
                     };
-                    match img_file.write_all(&img_content).await {
-                        Ok(_) => (),
-                        Err(e) => return Err(e.into()),
-                    }
-
-                    Ok((
-                        url,
-                        img_path
-                            .file_name()
-                            .map(|os_str_name| {
-                                os_str_name
-                                    .to_str()
-                                    .expect("Unable to get image file name")
-                                    .to_string()
-                            })
-                            .unwrap(),
-                        img_mime,
-                    ))
+                    process_response.await.map_err(|mut e: ImgError| {
+                        e.set_url(url);
+                        e
+                    })
                 }
-                Err(e) => Err(e.into()),
+                Err(e) => {
+                    let mut img_err: ImgError = e.into();
+                    img_err.set_url(url);
+                    Err(img_err)
+                }
             }
         });
 
@@ -170,7 +179,7 @@ pub async fn download_images(
 
     let imgs_req_iter = stream::from_iter(imgs_req_iter)
         .buffered(10)
-        .collect::<Vec<Result<_, PaperoniError>>>()
+        .collect::<Vec<Result<_, ImgError>>>()
         .await;
     let mut errors = Vec::new();
     let mut replaced_imgs = Vec::new();

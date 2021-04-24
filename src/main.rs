@@ -70,6 +70,13 @@ fn download(app_config: AppConfig) {
                                     if img_errors.len() > 1 { "s" } else { "" },
                                     url
                                 );
+                                for img_error in img_errors {
+                                    warn!(
+                                        "{}\n\t\tReason {}",
+                                        img_error.url().as_ref().unwrap(),
+                                        img_error
+                                    );
+                                }
                             }
                             articles.push(extractor);
                         }
