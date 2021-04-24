@@ -38,7 +38,12 @@ It takes a url and downloads the article content from it and saves it to an epub
                 .long("max_conn")
                 .help("The maximum number of concurrent HTTP connections when downloading articles. Default is 8")
                 .long_help("The maximum number of concurrent HTTP connections when downloading articles. Default is 8.\nNOTE: It is advised to use as few connections as needed i.e between 1 and 50. Using more connections can end up overloading your network card with too many concurrent requests.")
-                .takes_value(true));
+                .takes_value(true))
+        .arg(
+            Arg::with_name("debug")
+                .long("debug")
+                .help("Enable logging of events for debugging")
+                .takes_value(false));
     let arg_matches = app.get_matches();
     let mut urls: Vec<String> = match arg_matches.value_of("file") {
         Some(file_name) => {
@@ -84,6 +89,9 @@ It takes a url and downloads the article content from it and saves it to an epub
         };
         app_config.set_merged(file_name);
     }
+    if arg_matches.is_present("debug") {
+        app_config.toggle_debug(true);
+    }
     app_config
 }
 
@@ -91,6 +99,7 @@ pub struct AppConfig {
     urls: Vec<String>,
     max_conn: usize,
     merged: Option<String>,
+    is_debug: bool,
 }
 
 impl AppConfig {
@@ -99,7 +108,12 @@ impl AppConfig {
             urls: vec![],
             max_conn,
             merged: None,
+            is_debug: false,
         }
+    }
+
+    fn toggle_debug(&mut self, is_debug: bool) {
+        self.is_debug = is_debug;
     }
 
     fn set_urls(&mut self, urls: Vec<String>) {
@@ -119,5 +133,9 @@ impl AppConfig {
 
     pub fn merged(&self) -> Option<&String> {
         self.merged.as_ref()
+    }
+
+    pub fn is_debug(&self) -> bool {
+        self.is_debug
     }
 }

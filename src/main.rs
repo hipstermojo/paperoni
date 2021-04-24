@@ -31,26 +31,29 @@ fn main() {
     let app_config = cli::cli_init();
 
     if !app_config.urls().is_empty() {
-        match UserDirs::new() {
-            Some(user_dirs) => {
-                let home_dir = user_dirs.home_dir();
-                let paperoni_dir = home_dir.join(".paperoni");
-                let log_dir = paperoni_dir.join("logs");
-                if !paperoni_dir.is_dir() || !log_dir.is_dir() {
-                    std::fs::create_dir_all(&log_dir)
-                        .expect("Unable to create paperoni directories on home directory for logging purposes");
+        if app_config.is_debug() {
+            match UserDirs::new() {
+                Some(user_dirs) => {
+                    let home_dir = user_dirs.home_dir();
+                    let paperoni_dir = home_dir.join(".paperoni");
+                    let log_dir = paperoni_dir.join("logs");
+                    if !paperoni_dir.is_dir() || !log_dir.is_dir() {
+                        std::fs::create_dir_all(&log_dir)
+                            .expect("Unable to create paperoni directories on home directory for logging purposes");
+                    }
+                    match flexi_logger::Logger::with_str("paperoni=debug")
+                        .directory(log_dir)
+                        .log_to_file()
+                        .print_message()
+                        .start()
+                    {
+                        Ok(_) => (),
+                        Err(e) => eprintln!("Unable to start logger!\n{}", e),
+                    }
                 }
-                match flexi_logger::Logger::with_str("paperoni=debug")
-                    .directory(log_dir)
-                    .log_to_file()
-                    .start()
-                {
-                    Ok(_) => (),
-                    Err(e) => eprintln!("Unable to start logger!\n{}", e),
-                }
-            }
-            None => eprintln!("Unable to get user directories for logging purposes"),
-        };
+                None => eprintln!("Unable to get user directories for logging purposes"),
+            };
+        }
         download(app_config);
     }
 }
