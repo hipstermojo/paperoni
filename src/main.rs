@@ -4,7 +4,7 @@ extern crate lazy_static;
 use async_std::stream;
 use async_std::task;
 use comfy_table::presets::{UTF8_FULL, UTF8_HORIZONTAL_BORDERS_ONLY};
-use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Table};
+use comfy_table::{ContentArrangement, Table};
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, warn};
@@ -17,12 +17,14 @@ mod extractor;
 /// This module is responsible for async HTTP calls for downloading
 /// the HTML content and images
 mod http;
+mod logs;
 mod moz_readability;
 
 use cli::AppConfig;
 use epub::generate_epubs;
 use extractor::Extractor;
 use http::{download_images, fetch_html};
+use logs::display_summary;
 
 fn main() {
     let app_config = cli::cli_init();
@@ -105,50 +107,9 @@ fn download(app_config: AppConfig) {
             errors.extend(gen_epub_errors);
         }
     };
-    let successfully_downloaded_count = app_config.urls().len() - errors.len();
-
-    println!(
-        "{} articles downloaded successfully. {}",
-        if successfully_downloaded_count == app_config.urls().len() {
-            "All".to_string()
-        } else {
-            successfully_downloaded_count.to_string()
-        },
-        if errors.len() > 0 {
-            errors.len().to_string() + " failed"
-        } else {
-            "".to_string()
-        }
-    );
-
-    if successfully_downloaded_count > 0 {
-        println!("{}", succesful_articles_table);
-    }
-    if !errors.is_empty() {
-        println!(
-            "{}Failed article downloads{}",
-            Attribute::Bold,
-            Attribute::NormalIntensity
-        );
-        let mut table_failed = Table::new();
-        table_failed
-            .load_preset(UTF8_HORIZONTAL_BORDERS_ONLY)
-            .set_header(vec![
-                Cell::new("Link").set_alignment(CellAlignment::Center),
-                Cell::new("Reason").set_alignment(CellAlignment::Center),
-            ])
-            .set_content_arrangement(ContentArrangement::Dynamic);
-
-        for error in errors {
-            table_failed.add_row(vec![
-                error
-                    .article_source()
-                    .clone()
-                    .unwrap_or_else(|| "<unknown link>".to_string()),
-                format!("{}", error.kind()),
-            ]);
-        }
-        println!("{}", table_failed);
+    let has_errors = !errors.is_empty();
+    display_summary(app_config.urls().len(), succesful_articles_table, errors);
+    if has_errors {
         std::process::exit(1);
     }
 }
