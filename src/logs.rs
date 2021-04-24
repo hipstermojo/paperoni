@@ -1,5 +1,6 @@
+use colored::*;
 use comfy_table::presets::UTF8_HORIZONTAL_BORDERS_ONLY;
-use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Table};
+use comfy_table::{Cell, CellAlignment, ContentArrangement, Table};
 use log::error;
 
 use crate::errors::PaperoniError;
@@ -18,17 +19,14 @@ pub fn display_summary(
             successfully_downloaded_count,
             errors.len()
         )
+        .bold()
     );
 
     if successfully_downloaded_count > 0 {
         println!("{}", succesful_articles_table);
     }
     if !errors.is_empty() {
-        println!(
-            "{}Failed article downloads{}",
-            Attribute::Bold,
-            Attribute::NormalIntensity
-        );
+        println!("\n{}", "Failed article downloads".bright_red().bold());
         let mut table_failed = Table::new();
         table_failed
             .load_preset(UTF8_HORIZONTAL_BORDERS_ONLY)
@@ -56,10 +54,14 @@ fn short_summary(initial_count: usize, successful_count: usize, failed_count: us
         panic!("initial_count must be equal to the sum of failed and successful count")
     }
     let get_noun = |count: usize| if count == 1 { "article" } else { "articles" };
-    if successful_count == initial_count {
-        "All articles downloaded successfully".into()
+    if successful_count == initial_count && successful_count == 1 {
+        "Article downloaded successfully".green().to_string()
+    } else if initial_count == failed_count && failed_count == 1 {
+        "Article failed to download".red().to_string()
+    } else if successful_count == initial_count {
+        "All articles downloaded successfully".green().to_string()
     } else if successful_count == 0 {
-        "All articles failed to download".into()
+        "All articles failed to download".red().to_string()
     } else {
         format!(
             "{} {} downloaded successfully, {} {} failed",
@@ -68,33 +70,50 @@ fn short_summary(initial_count: usize, successful_count: usize, failed_count: us
             failed_count,
             get_noun(failed_count)
         )
+        .yellow()
+        .to_string()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::short_summary;
+    use colored::*;
     #[test]
     fn test_short_summary() {
         assert_eq!(
+            short_summary(1, 1, 0),
+            "Article downloaded successfully".green().to_string()
+        );
+        assert_eq!(
+            short_summary(1, 0, 1),
+            "Article failed to download".red().to_string()
+        );
+        assert_eq!(
             short_summary(10, 10, 0),
-            "All articles downloaded successfully".to_string()
+            "All articles downloaded successfully".green().to_string()
         );
         assert_eq!(
             short_summary(10, 0, 10),
-            "All articles failed to download".to_string()
+            "All articles failed to download".red().to_string()
         );
         assert_eq!(
             short_summary(10, 8, 2),
-            "8 articles downloaded successfully, 2 articles failed".to_string()
+            "8 articles downloaded successfully, 2 articles failed"
+                .yellow()
+                .to_string()
         );
         assert_eq!(
             short_summary(10, 1, 9),
-            "1 article downloaded successfully, 9 articles failed".to_string()
+            "1 article downloaded successfully, 9 articles failed"
+                .yellow()
+                .to_string()
         );
         assert_eq!(
             short_summary(7, 6, 1),
-            "6 articles downloaded successfully, 1 article failed".to_string()
+            "6 articles downloaded successfully, 1 article failed"
+                .yellow()
+                .to_string()
         );
     }
 

@@ -5,6 +5,7 @@ use async_std::stream;
 use async_std::task;
 use comfy_table::presets::{UTF8_FULL, UTF8_HORIZONTAL_BORDERS_ONLY};
 use comfy_table::{ContentArrangement, Table};
+use directories::UserDirs;
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, warn};
@@ -30,13 +31,26 @@ fn main() {
     let app_config = cli::cli_init();
 
     if !app_config.urls().is_empty() {
-        match flexi_logger::Logger::with_str("paperoni=debug")
-            .log_to_file()
-            .start()
-        {
-            Ok(_) => (),
-            Err(e) => eprintln!("Unable to start logger!\n{}", e),
-        }
+        match UserDirs::new() {
+            Some(user_dirs) => {
+                let home_dir = user_dirs.home_dir();
+                let paperoni_dir = home_dir.join(".paperoni");
+                let log_dir = paperoni_dir.join("logs");
+                if !paperoni_dir.is_dir() || !log_dir.is_dir() {
+                    std::fs::create_dir_all(&log_dir)
+                        .expect("Unable to create paperoni directories on home directory for logging purposes");
+                }
+                match flexi_logger::Logger::with_str("paperoni=debug")
+                    .directory(log_dir)
+                    .log_to_file()
+                    .start()
+                {
+                    Ok(_) => (),
+                    Err(e) => eprintln!("Unable to start logger!\n{}", e),
+                }
+            }
+            None => eprintln!("Unable to get user directories for logging purposes"),
+        };
         download(app_config);
     }
 }
