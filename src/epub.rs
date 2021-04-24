@@ -1,6 +1,5 @@
 use std::fs::File;
 
-use comfy_table::presets::{UTF8_FULL, UTF8_HORIZONTAL_BORDERS_ONLY};
 use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -13,6 +12,7 @@ use crate::{
 pub fn generate_epubs(
     articles: Vec<Extractor>,
     merged: Option<&String>,
+    successful_articles_table: &mut Table,
 ) -> Result<(), Vec<PaperoniError>> {
     let bar = ProgressBar::new(articles.len() as u64);
     let style = ProgressStyle::default_bar().template(
@@ -21,18 +21,11 @@ pub fn generate_epubs(
     bar.set_style(style);
     bar.set_message("Generating epubs");
 
-    let mut base_table = Table::new();
-    base_table
-        .load_preset(UTF8_FULL)
-        .load_preset(UTF8_HORIZONTAL_BORDERS_ONLY)
-        .set_content_arrangement(ContentArrangement::Dynamic);
-
     let mut errors: Vec<PaperoniError> = Vec::new();
-    let mut can_print_table = false;
 
     match merged {
         Some(name) => {
-            base_table.set_header(vec![Cell::new("Table of Contents")
+            successful_articles_table.set_header(vec![Cell::new("Table of Contents")
                 .add_attribute(Attribute::Bold)
                 .set_alignment(CellAlignment::Center)
                 .fg(Color::Green)]);
@@ -90,7 +83,7 @@ pub fn generate_epubs(
                         errors.push(error);
                     }
                     bar.inc(1);
-                    base_table.add_row(vec![article.metadata().title()]);
+                    successful_articles_table.add_row(vec![article.metadata().title()]);
                     epub
                 });
             let mut out_file = File::create(&name).unwrap();
@@ -106,17 +99,16 @@ pub fn generate_epubs(
 
             bar.finish_with_message("Generated epub\n");
             println!("Created {:?}", name);
-            can_print_table = true;
         }
         None => {
-            base_table
+            successful_articles_table
                 .set_header(vec![Cell::new("Downloaded articles")
                     .add_attribute(Attribute::Bold)
                     .set_alignment(CellAlignment::Center)
                     .fg(Color::Green)])
                 .set_content_arrangement(ContentArrangement::Dynamic);
 
-            for article in articles {
+            for article in &articles {
                 let mut result = || -> Result<(), PaperoniError> {
                     let mut epub = EpubBuilder::new(ZipLibrary::new()?)?;
                     let file_name = format!(
@@ -151,10 +143,9 @@ pub fn generate_epubs(
                     epub.generate(&mut out_file)?;
                     bar.inc(1);
 
-                    base_table.add_row(vec![article.metadata().title()]);
+                    successful_articles_table.add_row(vec![article.metadata().title()]);
 
                     // println!("Created {:?}", file_name);
-                    can_print_table = true;
                     Ok(())
                 };
                 if let Err(mut error) = result() {
@@ -165,9 +156,7 @@ pub fn generate_epubs(
             bar.finish_with_message("Generated epubs\n");
         }
     }
-    if can_print_table {
-        println!("{}", base_table);
-    }
+
     if errors.is_empty() {
         Ok(())
     } else {

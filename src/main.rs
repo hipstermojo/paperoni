@@ -3,7 +3,7 @@ extern crate lazy_static;
 
 use async_std::stream;
 use async_std::task;
-use comfy_table::presets::UTF8_HORIZONTAL_BORDERS_ONLY;
+use comfy_table::presets::{UTF8_FULL, UTF8_HORIZONTAL_BORDERS_ONLY};
 use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Table};
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -78,12 +78,36 @@ fn download(app_config: AppConfig) {
         articles
     });
     bar.finish_with_message("Downloaded articles");
-    match generate_epubs(articles, app_config.merged()) {
+    let mut succesful_articles_table = Table::new();
+    succesful_articles_table
+        .load_preset(UTF8_FULL)
+        .load_preset(UTF8_HORIZONTAL_BORDERS_ONLY)
+        .set_content_arrangement(ContentArrangement::Dynamic);
+    match generate_epubs(articles, app_config.merged(), &mut succesful_articles_table) {
         Ok(_) => (),
         Err(gen_epub_errors) => {
             errors.extend(gen_epub_errors);
         }
     };
+    let successfully_downloaded_count = app_config.urls().len() - errors.len();
+
+    println!(
+        "{} articles downloaded successfully. {}",
+        if successfully_downloaded_count == app_config.urls().len() {
+            "All".to_string()
+        } else {
+            successfully_downloaded_count.to_string()
+        },
+        if errors.len() > 0 {
+            errors.len().to_string() + " failed"
+        } else {
+            "".to_string()
+        }
+    );
+
+    if successfully_downloaded_count > 0 {
+        println!("{}", succesful_articles_table);
+    }
     if !errors.is_empty() {
         println!(
             "{}Failed article downloads{}",
@@ -109,5 +133,6 @@ fn download(app_config: AppConfig) {
             ]);
         }
         println!("{}", table_failed);
+        std::process::exit(1);
     }
 }
