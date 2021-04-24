@@ -3,6 +3,7 @@ use std::fs::File;
 use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
 use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
 use indicatif::{ProgressBar, ProgressStyle};
+use log::{debug, info};
 
 use crate::{
     errors::PaperoniError,
@@ -19,7 +20,9 @@ pub fn generate_epubs(
         "{spinner:.cyan} [{elapsed_precise}] {bar:40.white} {:>8} epub {pos}/{len:7} {msg:.green}",
     );
     bar.set_style(style);
-    bar.set_message("Generating epubs");
+    if !articles.is_empty() {
+        bar.set_message("Generating epubs");
+    }
 
     let mut errors: Vec<PaperoniError> = Vec::new();
 
@@ -47,6 +50,7 @@ pub fn generate_epubs(
                     return Err(errors);
                 }
             };
+            debug!("Creating {:?}", name);
             epub.inline_toc();
             articles
                 .iter()
@@ -62,7 +66,7 @@ pub fn generate_epubs(
                             EpubContent::new(format!("article_{}.xhtml", idx), html_str.as_bytes())
                                 .title(replace_metadata_value(section_name)),
                         )?;
-
+                        info!("Adding images for {:?}", name);
                         article.img_urls.iter().for_each(|img| {
                             // TODO: Add error handling and return errors as a vec
                             let mut file_path = std::env::temp_dir();
@@ -76,6 +80,7 @@ pub fn generate_epubs(
                             )
                             .unwrap();
                         });
+                        info!("Added images for {:?}", name);
                         Ok(())
                     };
                     if let Err(mut error) = article_result() {
@@ -98,6 +103,7 @@ pub fn generate_epubs(
             }
 
             bar.finish_with_message("Generated epub\n");
+            debug!("Created {:?}", name);
             println!("Created {:?}", name);
         }
         None => {
@@ -119,6 +125,7 @@ pub fn generate_epubs(
                             .replace("/", " ")
                             .replace("\\", " ")
                     );
+                    debug!("Creating {:?}", file_name);
                     let mut out_file = File::create(&file_name).unwrap();
                     let mut html_buf = Vec::new();
                     extractor::serialize_to_xhtml(article.article(), &mut html_buf)
@@ -145,7 +152,7 @@ pub fn generate_epubs(
 
                     successful_articles_table.add_row(vec![article.metadata().title()]);
 
-                    // println!("Created {:?}", file_name);
+                    debug!("Created {:?}", file_name);
                     Ok(())
                 };
                 if let Err(mut error) = result() {

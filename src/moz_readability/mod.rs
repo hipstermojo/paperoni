@@ -7,6 +7,7 @@ use kuchiki::{
     traits::*,
     NodeData, NodeRef,
 };
+use log::info;
 use url::Url;
 
 use crate::errors::{ErrorKind, PaperoniError};
@@ -1587,14 +1588,12 @@ impl Readability {
     /// Using a variety of metrics (content score, classname, element types), find the content that is most likely to be the stuff
     /// a user wants to read. Then return it wrapped up in a div.
     fn grab_article(&mut self) -> Result<(), PaperoniError> {
-        // TODO: Add logging for this
-        // println!("Grabbing article");
+        info!("Grabbing article {:?}", self.metadata.title);
         // var doc = this._doc;
         // var isPaging = (page !== null ? true: false);
         // page = page ? page : this._doc.body;
         let page = self.root_node.select_first("body");
         if page.is_err() {
-            // TODO:Have error logging for this
             return Err(ErrorKind::ReadabilityError("Document has no <body>".into()).into());
         }
         let page = page.unwrap();
@@ -2114,6 +2113,7 @@ impl Readability {
                     false
                 });
                 self.article_node = Some(article_content);
+                info!("Successfully grabbed article {:?}", self.metadata.title);
                 return Ok(());
             }
         }

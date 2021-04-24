@@ -150,7 +150,7 @@ dependencies = [
  "fastrand",
  "futures-lite",
  "libc",
- "log 0.4.11",
+ "log 0.4.14",
  "nb-connect",
  "once_cell",
  "parking",
@@ -195,7 +195,7 @@ dependencies = [
  "futures-lite",
  "gloo-timers",
  "kv-log-macro",
- "log 0.4.11",
+ "log 0.4.14",
  "memchr",
  "num_cpus",
  "once_cell",
@@ -554,6 +554,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctor"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fbaabec2c953050352311293be5c6aba8e141ba19d6811862b232d6fd020484"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "ctr"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -717,6 +727,22 @@ dependencies = [
  "crc32fast",
  "libc",
  "miniz_oxide 0.3.7",
+]
+
+[[package]]
+name = "flexi_logger"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33ab94b6ac8eb69f1496a6993f26f785b5fd6d99b7416023eb2a6175c0b242b1"
+dependencies = [
+ "atty",
+ "chrono",
+ "glob",
+ "lazy_static",
+ "log 0.4.14",
+ "regex",
+ "thiserror",
+ "yansi",
 ]
 
 [[package]]
@@ -915,6 +941,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6503fe142514ca4799d4c26297c4248239fe8838d827db6bd6065c6ed29a6ce"
 
 [[package]]
+name = "glob"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
+
+[[package]]
 name = "gloo-timers"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -980,7 +1012,7 @@ version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aafcf38a1a36118242d29b92e1b08ef84e67e4a5ed06e0a80be20e6a32bfed6b"
 dependencies = [
- "log 0.4.11",
+ "log 0.4.14",
  "mac",
  "markup5ever",
  "proc-macro2",
@@ -1011,7 +1043,7 @@ dependencies = [
  "dashmap",
  "http-types",
  "isahc",
- "log 0.4.11",
+ "log 0.4.14",
 ]
 
 [[package]]
@@ -1087,7 +1119,7 @@ dependencies = [
  "flume",
  "futures-lite",
  "http",
- "log 0.4.11",
+ "log 0.4.14",
  "once_cell",
  "slab",
  "sluice",
@@ -1130,7 +1162,7 @@ version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0de8b303297635ad57c9f5059fd9cee7a47f8e8daa09df0fcd07dd39fb22977f"
 dependencies = [
- "log 0.4.11",
+ "log 0.4.14",
 ]
 
 [[package]]
@@ -1182,16 +1214,17 @@ version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e19e8d5c34a3e0e2223db8e060f9e8264aeeb5c5fc64a4ee9965c062211c024b"
 dependencies = [
- "log 0.4.11",
+ "log 0.4.14",
 ]
 
 [[package]]
 name = "log"
-version = "0.4.11"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fabed175da42fed1fa0746b0ea71f412aa9d35e76e95e59b192c64b9dc2bf8b"
+checksum = "51b9bbe6c47d51fc3e1a9b945965946b4c44142ab8792c50835a980d362c2710"
 dependencies = [
- "cfg-if 0.1.10",
+ "cfg-if 1.0.0",
+ "value-bag",
 ]
 
 [[package]]
@@ -1206,7 +1239,7 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aae38d669396ca9b707bfc3db254bc382ddb94f57cc5c235f34623a669a01dab"
 dependencies = [
- "log 0.4.11",
+ "log 0.4.14",
  "phf",
  "phf_codegen",
  "serde",
@@ -1277,7 +1310,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf80d3e903b34e0bd7282b218398aec54e082c840d9baf8339e0080a0c542956"
 dependencies = [
  "libc",
- "log 0.4.11",
+ "log 0.4.14",
  "miow",
  "ntapi",
  "winapi",
@@ -1410,14 +1443,17 @@ name = "paperoni"
 version = "0.3.0-alpha1"
 dependencies = [
  "async-std",
+ "atty",
  "clap",
  "comfy-table",
  "epub-builder",
+ "flexi_logger",
  "futures",
  "html5ever",
  "indicatif",
  "kuchiki",
  "lazy_static",
+ "log 0.4.14",
  "md5",
  "regex",
  "surf",
@@ -1568,7 +1604,7 @@ checksum = "a2a7bc6b2a29e632e45451c941832803a18cce6781db04de8a04696cdca8bde4"
 dependencies = [
  "cfg-if 0.1.10",
  "libc",
- "log 0.4.11",
+ "log 0.4.14",
  "wepoll-sys",
  "winapi",
 ]
@@ -1801,7 +1837,7 @@ dependencies = [
  "cssparser",
  "derive_more",
  "fxhash",
- "log 0.4.11",
+ "log 0.4.14",
  "matches",
  "phf",
  "phf_codegen",
@@ -2112,7 +2148,7 @@ dependencies = [
  "futures-util",
  "http-client",
  "http-types",
- "log 0.4.11",
+ "log 0.4.14",
  "mime_guess",
  "once_cell",
  "pin-project-lite 0.2.4",
@@ -2269,7 +2305,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0987850db3733619253fe60e17cb59b82d37c7e6c0236bb81e4d6b87c879f27"
 dependencies = [
  "cfg-if 0.1.10",
- "log 0.4.11",
+ "log 0.4.14",
  "pin-project-lite 0.1.11",
  "tracing-attributes",
  "tracing-core",
@@ -2401,6 +2437,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "value-bag"
+version = "1.0.0-alpha.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b676010e055c99033117c2343b33a40a30b91fecd6c49055ac9cd2d6c305ab1"
+dependencies = [
+ "ctor",
+]
+
+[[package]]
 name = "vcpkg"
 version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2460,7 +2505,7 @@ checksum = "f22b422e2a757c35a73774860af8e112bff612ce6cb604224e8e47641a9e4f68"
 dependencies = [
  "bumpalo",
  "lazy_static",
- "log 0.4.11",
+ "log 0.4.14",
  "proc-macro2",
  "quote",
  "syn",
@@ -2548,6 +2593,12 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "yansi"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fc79f4a1e39857fc00c3f662cbf2651c771f00e9c15fe2abc341806bd46bd71"
 
 [[package]]
 name = "zip"

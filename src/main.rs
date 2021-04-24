@@ -7,6 +7,7 @@ use comfy_table::presets::{UTF8_FULL, UTF8_HORIZONTAL_BORDERS_ONLY};
 use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Table};
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
+use log::{debug, warn};
 use url::Url;
 
 mod cli;
@@ -27,6 +28,13 @@ fn main() {
     let app_config = cli::cli_init();
 
     if !app_config.urls().is_empty() {
+        match flexi_logger::Logger::with_str("paperoni=debug")
+            .log_to_file()
+            .start()
+        {
+            Ok(_) => (),
+            Err(e) => eprintln!("Unable to start logger!\n{}", e),
+        }
         download(app_config);
     }
 }
@@ -46,7 +54,7 @@ fn download(app_config: AppConfig) {
         while let Some(fetch_result) = responses.next().await {
             match fetch_result {
                 Ok((url, html)) => {
-                    // println!("Extracting");
+                    debug!("Extracting {}", &url);
                     let mut extractor = Extractor::from_html(&html, &url);
                     bar.set_message("Extracting...");
                     match extractor.extract_content() {
@@ -56,7 +64,7 @@ fn download(app_config: AppConfig) {
                                 download_images(&mut extractor, &Url::parse(&url).unwrap(), &bar)
                                     .await
                             {
-                                eprintln!(
+                                warn!(
                                     "{} image{} failed to download for {}",
                                     img_errors.len(),
                                     if img_errors.len() > 1 { "s" } else { "" },
@@ -78,6 +86,7 @@ fn download(app_config: AppConfig) {
         articles
     });
     bar.finish_with_message("Downloaded articles");
+
     let mut succesful_articles_table = Table::new();
     succesful_articles_table
         .load_preset(UTF8_FULL)

@@ -2,6 +2,7 @@ use async_std::io::prelude::*;
 use async_std::{fs::File, stream};
 use futures::StreamExt;
 use indicatif::ProgressBar;
+use log::{debug, info};
 use url::Url;
 
 use crate::{errors::ErrorKind, errors::PaperoniError, extractor::Extractor};
@@ -10,7 +11,7 @@ type HTMLResource = (String, String);
 
 pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
     let client = surf::Client::new();
-    // println!("Fetching...");
+    debug!("Fetching {}", url);
 
     let process_request = async {
         let mut redirect_count: u8 = 0;
@@ -23,10 +24,19 @@ pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
             if res.status().is_redirection() {
                 if let Some(location) = res.header(surf::http::headers::LOCATION) {
                     match Url::parse(location.last().as_str()) {
-                        Ok(valid_url) => url = valid_url,
+                        Ok(valid_url) => {
+                            info!("Redirecting {} to {}", url, valid_url);
+                            url = valid_url
+                        }
                         Err(e) => match e {
                             url::ParseError::RelativeUrlWithoutBase => {
-                                url = base_url.join(location.last().as_str())?
+                                match base_url.join(location.last().as_str()) {
+                                    Ok(joined_url) => {
+                                        info!("Redirecting {} to {}", url, joined_url);
+                                        url = joined_url;
+                                    }
+                                    Err(e) => return Err(e.into()),
+                                }
                             }
                             e => return Err(e.into()),
                         },
@@ -35,6 +45,7 @@ pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
             } else if res.status().is_success() {
                 if let Some(mime) = res.content_type() {
                     if mime.essence() == "text/html" {
+                        debug!("Successfully fetched {}", url);
                         return Ok((url.to_string(), res.body_string().await?));
                     } else {
                         let msg = format!(
@@ -67,7 +78,11 @@ pub async fn download_images(
     bar: &ProgressBar,
 ) -> Result<(), Vec<PaperoniError>> {
     if extractor.img_urls.len() > 0 {
-        // println!("Downloading images...");
+        debug!(
+            "Downloading {} images for {}",
+            extractor.img_urls.len(),
+            article_origin
+        );
     }
     let img_count = extractor.img_urls.len();
 
