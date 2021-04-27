@@ -91,6 +91,17 @@ pub fn generate_epubs(
                     successful_articles_table.add_row(vec![article.metadata().title()]);
                     epub
                 });
+            let appendix = generate_appendix(articles.iter().collect());
+            if let Err(err) = epub.add_content(
+                EpubContent::new("appendix.xhtml", appendix.as_bytes())
+                    .title(replace_metadata_value("Article Sources")),
+            ) {
+                let mut paperoni_err: PaperoniError = err.into();
+                paperoni_err.set_article_source(name);
+                errors.push(paperoni_err);
+                return Err(errors);
+            }
+
             let mut out_file = File::create(&name).unwrap();
             match epub.generate(&mut out_file) {
                 Ok(_) => (),
@@ -147,6 +158,11 @@ pub fn generate_epubs(
                             img.1.as_ref().unwrap(),
                         )?;
                     }
+                    let appendix = generate_appendix(vec![&article]);
+                    epub.add_content(
+                        EpubContent::new("appendix.xhtml", appendix.as_bytes())
+                            .title(replace_metadata_value("Article Source")),
+                    )?;
                     epub.generate(&mut out_file)?;
                     bar.inc(1);
 
@@ -177,6 +193,37 @@ fn replace_metadata_value(value: &str) -> String {
         .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
+}
+
+//TODO: The type signature of the argument should change as it requires that merged articles create an entirely new Vec of references
+fn generate_appendix(articles: Vec<&Extractor>) -> String {
+    let link_tags: String = articles
+        .iter()
+        .map(|article| {
+            let article_name = if !article.metadata().title().is_empty() {
+                article.metadata().title()
+            } else {
+                &article.url
+            };
+            format!(
+                "<a href=\"{}\">{}</a><br></br>",
+                replace_metadata_value(&article.url),
+                replace_metadata_value(article_name)
+            )
+        })
+        .collect();
+    let template = format!(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+    <head>
+    </head>
+    <body>
+        <h2>Appendix</h2><h3>Article sources</h3>
+        {}
+    </body>
+</html>"#,
+        link_tags
+    );
+    template
 }
 
 #[cfg(test)]
