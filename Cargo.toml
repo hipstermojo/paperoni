@@ -13,7 +13,7 @@ readme = "README.md"
 
 [dependencies]
 async-std = "1.9.0"
-atty = "0.2.14"
+# atty = "0.2.14"
 clap = "2.33.3"
 colored = "2.0.0"
 comfy-table = "2.1.0"

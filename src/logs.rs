@@ -1,6 +1,7 @@
 use colored::*;
 use comfy_table::presets::UTF8_HORIZONTAL_BORDERS_ONLY;
 use comfy_table::{Cell, CellAlignment, ContentArrangement, Table};
+use directories::UserDirs;
 use log::error;
 
 use crate::errors::PaperoniError;
@@ -73,6 +74,31 @@ fn short_summary(initial_count: usize, successful_count: usize, failed_count: us
         .yellow()
         .to_string()
     }
+}
+
+pub fn init_logger() {
+    match UserDirs::new() {
+        Some(user_dirs) => {
+            let home_dir = user_dirs.home_dir();
+            let paperoni_dir = home_dir.join(".paperoni");
+            let log_dir = paperoni_dir.join("logs");
+            if !paperoni_dir.is_dir() || !log_dir.is_dir() {
+                std::fs::create_dir_all(&log_dir).expect(
+                    "Unable to create paperoni directories on home directory for logging purposes",
+                );
+            }
+            match flexi_logger::Logger::with_str("paperoni=debug")
+                .directory(log_dir)
+                .log_to_file()
+                .print_message()
+                .start()
+            {
+                Ok(_) => (),
+                Err(e) => eprintln!("Unable to start logger!\n{}", e),
+            }
+        }
+        None => eprintln!("Unable to get user directories for logging purposes"),
+    };
 }
 
 #[cfg(test)]
