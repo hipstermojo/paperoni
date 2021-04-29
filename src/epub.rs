@@ -6,27 +6,33 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info};
 
 use crate::{
+    cli::AppConfig,
     errors::PaperoniError,
     extractor::{self, Extractor},
 };
 
 pub fn generate_epubs(
     articles: Vec<Extractor>,
-    merged: Option<&String>,
+    app_config: &AppConfig,
     successful_articles_table: &mut Table,
 ) -> Result<(), Vec<PaperoniError>> {
-    let bar = ProgressBar::new(articles.len() as u64);
-    let style = ProgressStyle::default_bar().template(
+    let bar = if app_config.can_disable_progress_bar() {
+        ProgressBar::hidden()
+    } else {
+        let enabled_bar = ProgressBar::new(articles.len() as u64);
+        let style = ProgressStyle::default_bar().template(
         "{spinner:.cyan} [{elapsed_precise}] {bar:40.white} {:>8} epub {pos}/{len:7} {msg:.green}",
     );
-    bar.set_style(style);
-    if !articles.is_empty() {
-        bar.set_message("Generating epubs");
-    }
+        enabled_bar.set_style(style);
+        if !articles.is_empty() {
+            enabled_bar.set_message("Generating epubs");
+        }
+        enabled_bar
+    };
 
     let mut errors: Vec<PaperoniError> = Vec::new();
 
-    match merged {
+    match app_config.merged() {
         Some(name) => {
             successful_articles_table.set_header(vec![Cell::new("Table of Contents")
                 .add_attribute(Attribute::Bold)

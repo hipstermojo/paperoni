@@ -24,27 +24,30 @@ use cli::AppConfig;
 use epub::generate_epubs;
 use extractor::Extractor;
 use http::{download_images, fetch_html};
-use logs::{display_summary, init_logger};
+use logs::display_summary;
 
 fn main() {
     let app_config = cli::cli_init();
 
     if !app_config.urls().is_empty() {
-        if app_config.is_debug() {
-            init_logger();
-        }
         download(app_config);
     }
 }
 
 fn download(app_config: AppConfig) {
-    let bar = ProgressBar::new(app_config.urls().len() as u64);
     let mut errors = Vec::new();
-    let style = ProgressStyle::default_bar().template(
+    let mut partial_download_count: usize = 0;
+    let bar = if app_config.can_disable_progress_bar() {
+        ProgressBar::hidden()
+    } else {
+        let enabled_bar = ProgressBar::new(app_config.urls().len() as u64);
+        let style = ProgressStyle::default_bar().template(
         "{spinner:.cyan} [{elapsed_precise}] {bar:40.white} {:>8} link {pos}/{len:7} {msg:.yellow/white}",
     );
-    bar.set_style(style);
-    bar.enable_steady_tick(500);
+        enabled_bar.set_style(style);
+        enabled_bar.enable_steady_tick(500);
+        enabled_bar
+    };
     let articles = task::block_on(async {
         let urls_iter = app_config.urls().iter().map(|url| fetch_html(url));
         let mut responses = stream::from_iter(urls_iter).buffered(app_config.max_conn());
@@ -62,6 +65,7 @@ fn download(app_config: AppConfig) {
                                 download_images(&mut extractor, &Url::parse(&url).unwrap(), &bar)
                                     .await
                             {
+                                partial_download_count += 1;
                                 warn!(
                                     "{} image{} failed to download for {}",
                                     img_errors.len(),
@@ -97,14 +101,25 @@ fn download(app_config: AppConfig) {
         .load_preset(UTF8_FULL)
         .load_preset(UTF8_HORIZONTAL_BORDERS_ONLY)
         .set_content_arrangement(ContentArrangement::Dynamic);
-    match generate_epubs(articles, app_config.merged(), &mut succesful_articles_table) {
+    match generate_epubs(articles, &app_config, &mut succesful_articles_table) {
         Ok(_) => (),
         Err(gen_epub_errors) => {
             errors.extend(gen_epub_errors);
         }
     };
     let has_errors = !errors.is_empty();
-    display_summary(app_config.urls().len(), succesful_articles_table, errors);
+    display_summary(
+        app_config.urls().len(),
+        succesful_articles_table,
+        partial_download_count,
+        errors,
+    );
+    if app_config.is_logging_to_file() {
+        println!(
+            "Log written to paperoni_{}.log\n",
+            app_config.start_time().format("%Y-%m-%d_%H-%M-%S")
+        );
+    }
     if has_errors {
         std::process::exit(1);
     }
