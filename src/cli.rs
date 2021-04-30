@@ -14,10 +14,7 @@ pub fn cli_init() -> AppConfig {
         ])
         .version(clap::crate_version!())
         .about(
-            "
-Paperoni is an article downloader.
-It takes a url, downloads the article content from it and saves it to an epub.
-        ",
+            "Paperoni is a CLI tool made in Rust for downloading web articles as EPUBs",
         )
         .arg(
             Arg::with_name("urls")
@@ -47,7 +44,7 @@ It takes a url, downloads the article content from it and saves it to an epub.
             Arg::with_name("verbosity")
                 .short("v")
                 .multiple(true)
-                .help("Enables logging of events and set the verbosity level. Use -h to read on its usage")
+                .help("Enables logging of events and set the verbosity level. Use --help to read on its usage")
                 .long_help(
 "This takes upto 4 levels of verbosity in the following order.
  - Error (-v)
