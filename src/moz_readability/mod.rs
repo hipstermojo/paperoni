@@ -7,7 +7,10 @@ use kuchiki::{
     traits::*,
     NodeData, NodeRef,
 };
+use log::info;
 use url::Url;
+
+use crate::errors::{ErrorKind, PaperoniError};
 
 const DEFAULT_CHAR_THRESHOLD: usize = 500;
 const FLAG_STRIP_UNLIKELYS: u32 = 0x1;
@@ -76,14 +79,15 @@ impl Readability {
             metadata: MetaData::new(),
         }
     }
-    pub fn parse(&mut self, url: &str) {
+    pub fn parse(&mut self, url: &str) -> Result<(), PaperoniError> {
         self.unwrap_no_script_tags();
         self.remove_scripts();
         self.prep_document();
         self.metadata = self.get_article_metadata();
         self.article_title = self.metadata.title.clone();
-        self.grab_article();
+        self.grab_article()?;
         self.post_process_content(url);
+        Ok(())
     }
 
     /// Recursively check if node is image, or if node contains exactly only one image
@@ -426,8 +430,7 @@ impl Readability {
                     let mut matches = None;
                     if let Some(property) = node_attr.get("property") {
                         matches = regexes::PROPERTY_REGEX.captures(property);
-                        if matches.is_some() {
-                            let captures = matches.as_ref().unwrap();
+                        if let Some(captures) = &matches {
                             for capture in captures.iter() {
                                 let mut name = capture.unwrap().as_str().to_lowercase();
                                 name = regexes::REPLACE_WHITESPACE_REGEX
@@ -561,7 +564,7 @@ impl Readability {
             .root_node
             .select_first("title")
             .map(|title| title.text_contents().trim().to_string())
-            .expect("This file has no <title> tag to extract a title from");
+            .unwrap_or("".to_string());
         let orig_title = cur_title.clone();
         let mut title_had_hierarchical_separators = false;
         let word_count = |s: &str| -> usize { s.split_whitespace().count() };
@@ -595,8 +598,8 @@ impl Readability {
             }
         } else if cur_title.len() > 150 || cur_title.len() < 15 {
             let mut h1_nodes = self.root_node.select("h1").unwrap();
-            let (_, h1_count) = h1_nodes.size_hint();
-            if Some(1) == h1_count {
+            let h1_count = self.root_node.select("h1").unwrap().count();
+            if h1_count == 1 {
                 cur_title = Self::get_inner_text(h1_nodes.next().unwrap().as_node(), None);
             }
         }
@@ -799,6 +802,7 @@ impl Readability {
                         state = State::ReadProp;
                         decl.1 = Some(token.trim().to_string());
                         tokens.push(decl.clone());
+                        decl = (None, None);
                         token.clear();
                     } else {
                         token.push(c);
@@ -819,11 +823,18 @@ impl Readability {
             }
         }
         if !token.is_empty() {
-            decl.1 = Some(token.trim().to_string());
-            tokens.push(decl);
+            match state {
+                State::ReadVal => {
+                    decl.1 = Some(token.trim().to_string());
+                    tokens.push(decl);
+                }
+                _ => (),
+            }
         }
+
         tokens
             .into_iter()
+            .filter(|tok_pair| tok_pair.0.is_some() && tok_pair.1.is_some())
             .map(|tok_pair| (tok_pair.0.unwrap(), tok_pair.1.unwrap()))
             .collect()
     }
@@ -1576,16 +1587,14 @@ impl Readability {
 
     /// Using a variety of metrics (content score, classname, element types), find the content that is most likely to be the stuff
     /// a user wants to read. Then return it wrapped up in a div.
-    fn grab_article(&mut self) {
-        println!("Grabbing article");
+    fn grab_article(&mut self) -> Result<(), PaperoniError> {
+        info!("Grabbing article {:?}", self.metadata.title);
         // var doc = this._doc;
         // var isPaging = (page !== null ? true: false);
         // page = page ? page : this._doc.body;
         let page = self.root_node.select_first("body");
         if page.is_err() {
-            // TODO:Have error logging for this
-            println!("Document has no <body>");
-            return;
+            return Err(ErrorKind::ReadabilityError("Document has no <body>".into()).into());
         }
         let page = page.unwrap();
         let mut attempts: Vec<ExtractAttempt> = Vec::new();
@@ -2075,8 +2084,10 @@ impl Readability {
                     attempts.push(ExtractAttempt::new(article_content.clone(), text_length));
                     attempts.sort_by(|a, b| b.length.partial_cmp(&a.length).unwrap());
                     if attempts.first().as_ref().unwrap().length == 0 {
-                        println!("Unable to extract content");
-                        break;
+                        return Err(ErrorKind::ReadabilityError(
+                            "Unable to extract content".into(),
+                        )
+                        .into());
                     }
                     article_content = attempts[0].article.clone();
                     parse_successful = true;
@@ -2102,7 +2113,8 @@ impl Readability {
                     false
                 });
                 self.article_node = Some(article_content);
-                return;
+                info!("Successfully grabbed article {:?}", self.metadata.title);
+                return Ok(());
             }
         }
     }
@@ -2460,12 +2472,24 @@ mod test {
         css_map.insert("align-items".to_string(), "center".to_string());
         css_map.insert("border".to_string(), "2px solid black".to_string());
 
-        let css_str_to_vec = Readability::inline_css_str_to_map(css_str);
-        assert_eq!(css_map, css_str_to_vec);
+        let css_str_to_map = Readability::inline_css_str_to_map(css_str);
+        assert_eq!(css_map, css_str_to_map);
         let mut css_map = HashMap::new();
         css_map.insert("color".to_string(), "red".to_string());
         css_map.insert("background-image".to_string(), "url('data:image/jpeg;base64,/wgARCAALABQDASIAAhEBAxEB/8QAFwABAQEBAAAAAAAAAAAAAAAAAgADBP/')".to_string());
         assert_eq!(css_map, Readability::inline_css_str_to_map("color: red;background-image: url('data:image/jpeg;base64,/wgARCAALABQDASIAAhEBAxEB/8QAFwABAQEBAAAAAAAAAAAAAAAAAgADBP/')"));
+
+        let empty_map = HashMap::new();
+        assert_eq!(empty_map, Readability::inline_css_str_to_map(" \n \t \r"));
+        assert_eq!(empty_map, Readability::inline_css_str_to_map("color"));
+
+        let mut css_map = HashMap::new();
+        css_map.insert("color".to_string(), "red".to_string());
+        css_map.insert("height".to_string(), "300px".to_string());
+        assert_eq!(
+            css_map,
+            Readability::inline_css_str_to_map("color: red;height: 300px;width")
+        );
     }
 
     #[test]

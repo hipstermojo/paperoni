@@ -1,65 +1,90 @@
 use async_std::io::prelude::*;
 use async_std::{fs::File, stream};
 use futures::StreamExt;
+use indicatif::ProgressBar;
+use log::{debug, info};
 use url::Url;
 
+use crate::errors::{ErrorKind, ImgError, PaperoniError};
 use crate::extractor::Extractor;
-
 type HTMLResource = (String, String);
 
-pub async fn fetch_url(
-    url: &str,
-) -> Result<HTMLResource, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
     let client = surf::Client::new();
-    println!("Fetching...");
+    debug!("Fetching {}", url);
 
-    let mut redirect_count: u8 = 0;
-    let base_url = Url::parse(&url)?;
-    let mut url = base_url.clone();
-    while redirect_count < 5 {
-        redirect_count += 1;
-        let req = surf::get(&url);
-        let mut res = client.send(req).await?;
-        if res.status().is_redirection() {
-            if let Some(location) = res.header(surf::http::headers::LOCATION) {
-                match Url::parse(location.last().as_str()) {
-                    Ok(valid_url) => url = valid_url,
-                    Err(e) => match e {
-                        url::ParseError::RelativeUrlWithoutBase => {
-                            url = base_url.join(location.last().as_str())?
+    let process_request = async {
+        let mut redirect_count: u8 = 0;
+        let base_url = Url::parse(&url)?;
+        let mut url = base_url.clone();
+        while redirect_count < 5 {
+            redirect_count += 1;
+            let req = surf::get(&url);
+            let mut res = client.send(req).await?;
+            if res.status().is_redirection() {
+                if let Some(location) = res.header(surf::http::headers::LOCATION) {
+                    match Url::parse(location.last().as_str()) {
+                        Ok(valid_url) => {
+                            info!("Redirecting {} to {}", url, valid_url);
+                            url = valid_url
                         }
-                        e => return Err(e.into()),
-                    },
-                };
-            }
-        } else if res.status().is_success() {
-            if let Some(mime) = res.content_type() {
-                if mime.essence() == "text/html" {
-                    return Ok((url.to_string(), res.body_string().await?));
+                        Err(e) => match e {
+                            url::ParseError::RelativeUrlWithoutBase => {
+                                match base_url.join(location.last().as_str()) {
+                                    Ok(joined_url) => {
+                                        info!("Redirecting {} to {}", url, joined_url);
+                                        url = joined_url;
+                                    }
+                                    Err(e) => return Err(e.into()),
+                                }
+                            }
+                            e => return Err(e.into()),
+                        },
+                    };
+                }
+            } else if res.status().is_success() {
+                if let Some(mime) = res.content_type() {
+                    if mime.essence() == "text/html" {
+                        debug!("Successfully fetched {}", url);
+                        return Ok((url.to_string(), res.body_string().await?));
+                    } else {
+                        let msg = format!(
+                            "Invalid HTTP response. Received {} instead of text/html",
+                            mime.essence()
+                        );
+
+                        return Err(ErrorKind::HTTPError(msg).into());
+                    }
                 } else {
-                    return Err(format!(
-                        "Invalid HTTP response. Received {} instead of text/html",
-                        mime.essence()
-                    )
-                    .into());
+                    return Err(ErrorKind::HTTPError("Unknown HTTP response".to_owned()).into());
                 }
             } else {
-                return Err("Unknown HTTP response".into());
+                let msg = format!("Request failed: HTTP {}", res.status());
+                return Err(ErrorKind::HTTPError(msg).into());
             }
-        } else {
-            return Err(format!("Request failed: HTTP {}", res.status()).into());
         }
-    }
-    Err("Unable to fetch HTML".into())
+        Err(ErrorKind::HTTPError("Unable to fetch HTML".to_owned()).into())
+    };
+
+    process_request.await.map_err(|mut error: PaperoniError| {
+        error.set_article_source(url);
+        error
+    })
 }
 
 pub async fn download_images(
     extractor: &mut Extractor,
     article_origin: &Url,
-) -> async_std::io::Result<()> {
+    bar: &ProgressBar,
+) -> Result<(), Vec<ImgError>> {
     if extractor.img_urls.len() > 0 {
-        println!("Downloading images...");
+        debug!(
+            "Downloading {} images for {}",
+            extractor.img_urls.len(),
+            article_origin
+        );
     }
+    let img_count = extractor.img_urls.len();
 
     let imgs_req_iter = extractor
         .img_urls
@@ -67,43 +92,73 @@ pub async fn download_images(
         .map(|(url, _)| {
             (
                 url,
-                surf::Client::new().get(get_absolute_url(&url, article_origin)),
+                surf::Client::new()
+                    .with(surf::middleware::Redirect::default())
+                    .get(get_absolute_url(&url, article_origin)),
             )
         })
-        .map(|(url, req)| async move {
-            let mut img_response = req.await.expect("Unable to retrieve image");
-            let img_content: Vec<u8> = img_response.body_bytes().await.unwrap();
-            let img_mime = img_response
-                .content_type()
-                .map(|mime| mime.essence().to_string());
-            let img_ext = img_response
-                .content_type()
-                .map(|mime| map_mime_subtype_to_ext(mime.subtype()).to_string())
-                .unwrap();
+        .enumerate()
+        .map(|(img_idx, (url, req))| async move {
+            bar.set_message(format!("Downloading images [{}/{}]", img_idx + 1, img_count).as_str());
+            match req.await {
+                Ok(mut img_response) => {
+                    let process_response = async {
+                        let img_content: Vec<u8> = match img_response.body_bytes().await {
+                            Ok(bytes) => bytes,
+                            Err(e) => return Err(e.into()),
+                        };
+                        let img_mime = img_response
+                            .content_type()
+                            .map(|mime| mime.essence().to_string());
+                        let img_ext = match img_response
+                            .content_type()
+                            .map(|mime| map_mime_subtype_to_ext(mime.subtype()).to_string())
+                        {
+                            Some(mime_str) => mime_str,
+                            None => {
+                                return Err(ErrorKind::HTTPError(
+                                    "Image has no Content-Type".to_owned(),
+                                )
+                                .into())
+                            }
+                        };
 
-            let mut img_path = std::env::temp_dir();
-            img_path.push(format!("{}.{}", hash_url(&url), &img_ext));
-            let mut img_file = File::create(&img_path)
-                .await
-                .expect("Unable to create file");
-            img_file
-                .write_all(&img_content)
-                .await
-                .expect("Unable to save to file");
+                        let mut img_path = std::env::temp_dir();
+                        img_path.push(format!("{}.{}", hash_url(&url), &img_ext));
+                        let mut img_file = match File::create(&img_path).await {
+                            Ok(file) => file,
+                            Err(e) => return Err(e.into()),
+                        };
+                        match img_file.write_all(&img_content).await {
+                            Ok(_) => (),
+                            Err(e) => return Err(e.into()),
+                        }
 
-            (
-                url,
-                img_path
-                    .file_name()
-                    .map(|os_str_name| {
-                        os_str_name
-                            .to_str()
-                            .expect("Unable to get image file name")
-                            .to_string()
+                        Ok((
+                            url,
+                            img_path
+                                .file_name()
+                                .map(|os_str_name| {
+                                    os_str_name
+                                        .to_str()
+                                        .expect("Unable to get image file name")
+                                        .to_string()
+                                })
+                                .unwrap(),
+                            img_mime,
+                        ))
+                    };
+                    process_response.await.map_err(|mut e: ImgError| {
+                        e.set_url(url);
+                        e
                     })
-                    .unwrap(),
-                img_mime,
-            )
+                }
+                Err(e) => {
+                    let mut img_err: ImgError = e.into();
+                    img_err.set_url(url);
+                    Err(img_err)
+                }
+            }
         });
 
     // A utility closure used when update the value of an image source after downloading is successful
@@ -112,8 +167,6 @@ pub async fn download_images(
             let (img_url, img_path, img_mime) = img_item;
             let img_ref = extractor
                 .article()
-                .as_mut()
-                .expect("Unable to get mutable ref")
                 .select_first(&format!("img[src='{}']", img_url))
                 .expect("Image node does not exist");
             let mut img_node = img_ref.attributes.borrow_mut();
@@ -124,14 +177,24 @@ pub async fn download_images(
             (img_path, img_mime)
         };
 
-    extractor.img_urls = stream::from_iter(imgs_req_iter)
+    let imgs_req_iter = stream::from_iter(imgs_req_iter)
         .buffered(10)
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .map(replace_existing_img_src)
-        .collect();
-    Ok(())
+        .collect::<Vec<Result<_, ImgError>>>()
+        .await;
+    let mut errors = Vec::new();
+    let mut replaced_imgs = Vec::new();
+    for img_req_result in imgs_req_iter {
+        match img_req_result {
+            Ok(img_req) => replaced_imgs.push(replace_existing_img_src(img_req)),
+            Err(e) => errors.push(e),
+        }
+    }
+    extractor.img_urls = replaced_imgs;
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 /// Handles getting the extension from a given MIME subtype.

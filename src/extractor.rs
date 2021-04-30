@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use kuchiki::{traits::*, NodeRef};
 
+use crate::errors::PaperoniError;
 use crate::moz_readability::{MetaData, Readability};
 
 pub type ResourceInfo = (String, Option<String>);
@@ -14,22 +15,24 @@ pub struct Extractor {
     article: Option<NodeRef>,
     pub img_urls: Vec<ResourceInfo>,
     readability: Readability,
+    pub url: String,
 }
 
 impl Extractor {
     /// Create a new instance of an HTML extractor given an HTML string
-    pub fn from_html(html_str: &str) -> Self {
+    pub fn from_html(html_str: &str, url: &str) -> Self {
         Extractor {
             article: None,
             img_urls: Vec::new(),
             readability: Readability::new(html_str),
+            url: url.to_string(),
         }
     }
 
     /// Locates and extracts the HTML in a document which is determined to be
     /// the source of the content
-    pub fn extract_content(&mut self, url: &str) {
-        self.readability.parse(url);
+    pub fn extract_content(&mut self) -> Result<(), PaperoniError> {
+        self.readability.parse(&self.url)?;
         if let Some(article_node_ref) = &self.readability.article_node {
             let template = r#"
             <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
@@ -44,6 +47,7 @@ impl Extractor {
             body.as_node().append(article_node_ref.clone());
             self.article = Some(doc);
         }
+        Ok(())
     }
 
     /// Traverses the DOM tree of the content and retrieves the IMG URLs
@@ -61,8 +65,11 @@ impl Extractor {
         }
     }
 
-    pub fn article(&self) -> Option<&NodeRef> {
-        self.article.as_ref()
+    /// Returns the extracted article [NodeRef]. It should only be called *AFTER* calling parse
+    pub fn article(&self) -> &NodeRef {
+        self.article.as_ref().expect(
+            "Article node doesn't exist. This may be because the document has not been parsed",
+        )
     }
 
     pub fn metadata(&self) -> &MetaData {
@@ -75,7 +82,7 @@ impl Extractor {
 pub fn serialize_to_xhtml<W: std::io::Write>(
     node_ref: &NodeRef,
     mut w: &mut W,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), PaperoniError> {
     let mut escape_map = HashMap::new();
     escape_map.insert("<", "&lt;");
     escape_map.insert(">", "&gt;");
@@ -96,6 +103,7 @@ pub fn serialize_to_xhtml<W: std::io::Write>(
                     let attrs_str = attrs
                         .map
                         .iter()
+                        .filter(|(k, _)| &k.local != "\"")
                         .map(|(k, v)| {
                             format!(
                                 "{}=\"{}\"",
@@ -156,8 +164,10 @@ mod test {
 
     #[test]
     fn test_extract_img_urls() {
-        let mut extractor = Extractor::from_html(TEST_HTML);
-        extractor.extract_content("http://example.com/");
+        let mut extractor = Extractor::from_html(TEST_HTML, "http://example.com/");
+        extractor
+            .extract_content()
+            .expect("Article extraction failed unexpectedly");
         extractor.extract_img_urls();
 
         assert!(extractor.img_urls.len() > 0);
