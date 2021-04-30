@@ -123,10 +123,10 @@ It takes a url, downloads the article content from it and saves it to an epub.
         }
         let log_levels: [LogLevel; 5] = [
             LogLevel::Off,
-            LogLevel::Debug,
-            LogLevel::Info,
-            LogLevel::Warn,
             LogLevel::Error,
+            LogLevel::Warn,
+            LogLevel::Info,
+            LogLevel::Debug,
         ];
         let level = arg_matches.occurrences_of("verbosity").clamp(0, 4) as usize;
         app_config.log_level = log_levels[level];
