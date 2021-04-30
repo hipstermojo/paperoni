@@ -101,16 +101,24 @@ pub fn cli_init() -> AppConfig {
 
     if let Some(name) = arg_matches.value_of("output_name") {
         let file_path = Path::new(name);
-        if !file_path.is_file() {
-            eprintln!("{:?} is not a vaild file", name);
+        if file_path.is_dir() {
+            eprintln!("{:?} is a directory", name);
             std::process::exit(1);
         }
 
-        let file_name = if name.ends_with(".epub") && name.len() > 5 {
+        let file_name = if file_path.extension().is_some() {
             name.to_owned()
         } else {
             name.to_owned() + ".epub"
         };
+
+        match std::fs::File::create(&file_name) {
+            Ok(_) => (),
+            Err(e) => {
+                eprintln!("Unable to create file {:?}\n{}", file_path, e);
+                std::process::exit(1)
+            }
+        }
         app_config.merged = Some(file_name);
     }
 
