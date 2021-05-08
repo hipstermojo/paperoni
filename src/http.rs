@@ -72,6 +72,53 @@ pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
     })
 }
 
+type ImgItem<'a> = (&'a str, String, Option<String>);
+
+async fn process_img_response<'a>(
+    img_response: &mut surf::Response,
+    url: &'a str,
+) -> Result<ImgItem<'a>, ImgError> {
+    let img_content: Vec<u8> = match img_response.body_bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => return Err(e.into()),
+    };
+    let img_mime = img_response
+        .content_type()
+        .map(|mime| mime.essence().to_string());
+    let img_ext = match img_response
+        .content_type()
+        .map(|mime| map_mime_subtype_to_ext(mime.subtype()).to_string())
+    {
+        Some(mime_str) => mime_str,
+        None => return Err(ErrorKind::HTTPError("Image has no Content-Type".to_owned()).into()),
+    };
+
+    let mut img_path = std::env::temp_dir();
+    img_path.push(format!("{}.{}", hash_url(url), &img_ext));
+    let mut img_file = match File::create(&img_path).await {
+        Ok(file) => file,
+        Err(e) => return Err(e.into()),
+    };
+    match img_file.write_all(&img_content).await {
+        Ok(_) => (),
+        Err(e) => return Err(e.into()),
+    }
+
+    Ok((
+        url,
+        img_path
+            .file_name()
+            .map(|os_str_name| {
+                os_str_name
+                    .to_str()
+                    .expect("Unable to get image file name")
+                    .to_string()
+            })
+            .unwrap(),
+        img_mime,
+    ))
+}
+
 pub async fn download_images(
     extractor: &mut Extractor,
     article_origin: &Url,
@@ -102,53 +149,9 @@ pub async fn download_images(
             bar.set_message(format!("Downloading images [{}/{}]", img_idx + 1, img_count).as_str());
             match req.await {
                 Ok(mut img_response) => {
-                    let process_response = async {
-                        let img_content: Vec<u8> = match img_response.body_bytes().await {
-                            Ok(bytes) => bytes,
-                            Err(e) => return Err(e.into()),
-                        };
-                        let img_mime = img_response
-                            .content_type()
-                            .map(|mime| mime.essence().to_string());
-                        let img_ext = match img_response
-                            .content_type()
-                            .map(|mime| map_mime_subtype_to_ext(mime.subtype()).to_string())
-                        {
-                            Some(mime_str) => mime_str,
-                            None => {
-                                return Err(ErrorKind::HTTPError(
-                                    "Image has no Content-Type".to_owned(),
-                                )
-                                .into())
-                            }
-                        };
-
-                        let mut img_path = std::env::temp_dir();
-                        img_path.push(format!("{}.{}", hash_url(&url), &img_ext));
-                        let mut img_file = match File::create(&img_path).await {
-                            Ok(file) => file,
-                            Err(e) => return Err(e.into()),
-                        };
-                        match img_file.write_all(&img_content).await {
-                            Ok(_) => (),
-                            Err(e) => return Err(e.into()),
-                        }
-
-                        Ok((
-                            url,
-                            img_path
-                                .file_name()
-                                .map(|os_str_name| {
-                                    os_str_name
-                                        .to_str()
-                                        .expect("Unable to get image file name")
-                                        .to_string()
-                                })
-                                .unwrap(),
-                            img_mime,
-                        ))
-                    };
-                    process_response.await.map_err(|mut e: ImgError| {
+                    let process_response =
+                        process_img_response(&mut img_response, url.as_ref()).await;
+                    process_response.map_err(|mut e: ImgError| {
                         e.set_url(url);
                         e
                     })
@@ -162,20 +165,19 @@ pub async fn download_images(
         });
 
     // A utility closure used when update the value of an image source after downloading is successful
-    let replace_existing_img_src =
-        |img_item: (&String, String, Option<String>)| -> (String, Option<String>) {
-            let (img_url, img_path, img_mime) = img_item;
-            let img_ref = extractor
-                .article()
-                .select_first(&format!("img[src='{}']", img_url))
-                .expect("Image node does not exist");
-            let mut img_node = img_ref.attributes.borrow_mut();
-            *img_node.get_mut("src").unwrap() = img_path.clone();
-            // srcset is removed because readers such as Foliate then fail to display
-            // the image already downloaded and stored in src
-            img_node.remove("srcset");
-            (img_path, img_mime)
-        };
+    let replace_existing_img_src = |img_item: ImgItem| -> (String, Option<String>) {
+        let (img_url, img_path, img_mime) = img_item;
+        let img_ref = extractor
+            .article()
+            .select_first(&format!("img[src='{}']", img_url))
+            .expect("Image node does not exist");
+        let mut img_node = img_ref.attributes.borrow_mut();
+        *img_node.get_mut("src").unwrap() = img_path.clone();
+        // srcset is removed because readers such as Foliate then fail to display
+        // the image already downloaded and stored in src
+        img_node.remove("srcset");
+        (img_path, img_mime)
+    };
 
     let imgs_req_iter = stream::from_iter(imgs_req_iter)
         .buffered(10)
