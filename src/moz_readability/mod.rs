@@ -1248,8 +1248,7 @@ impl Readability {
             let srcset = node_attr.get("srcset");
             let class = node_attr.get("class");
             if (src.is_some() || srcset.is_some())
-                && class.is_some()
-                && !class.unwrap().contains("lazy")
+                && class.and_then(|classname| classname.find("lazy")).is_none()
             {
                 continue;
             }
