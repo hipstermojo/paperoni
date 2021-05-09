@@ -3160,6 +3160,7 @@ characters. For that reason, this <p> tag could not be a byline because it's too
                     <source media="(min-width:465px)" srcset="img_white_flower.jpg">
                     <img src="img_orange_flowers.jpg" alt="Flowers" style="width:auto;">
                 </picture>
+                <img id="no-lazy-class" src="https://image.url/" data-attrs="{&quot;src&quot;:&quot;https://other.url/1.png&quot;,&quot;alt&quot;:&quot;&quot;}"/>
             </body>
         </html>
         "#;
@@ -3188,6 +3189,13 @@ characters. For that reason, this <p> tag could not be a byline because it's too
         assert_eq!(
             lazy_loaded_attrs.get("data-src"),
             lazy_loaded_attrs.get("src")
+        );
+
+        let no_lazy_class = doc.root_node.select_first("#no-lazy-class").unwrap();
+        let no_lazy_class_attrs = no_lazy_class.attributes.borrow();
+        assert_eq!(
+            no_lazy_class_attrs.get("src").unwrap(),
+            "https://image.url/"
         );
     }
 
