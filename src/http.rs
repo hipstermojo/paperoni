@@ -78,6 +78,13 @@ async fn process_img_response<'a>(
     img_response: &mut surf::Response,
     url: &'a str,
 ) -> Result<ImgItem<'a>, ImgError> {
+    if !img_response.status().is_success() {
+        let kind = ErrorKind::HTTPError(format!(
+            "Non-success HTTP status code ({})",
+            img_response.status()
+        ));
+        return Err(ImgError::with_kind(kind));
+    }
     let img_content: Vec<u8> = match img_response.body_bytes().await {
         Ok(bytes) => bytes,
         Err(e) => return Err(e.into()),
