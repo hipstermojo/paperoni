@@ -1,8 +1,12 @@
-![crates.io](https://img.shields.io/crates/v/paperoni.svg)
-
 <p align="center"><img src="./paperoni-dark.png"></p>
 
 <p align="center"><i>Salami not included</i></p>
+
+<div align="center">
+    <a href="https://crates.io/crates/paperoni">
+        <img alt="crates.io version" src="https://img.shields.io/crates/v/paperoni.svg">
+    </a>
+</div>
 
 Paperoni is a CLI tool made in Rust for downloading web articles as EPUBs.
 
