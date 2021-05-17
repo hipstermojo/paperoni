@@ -55,76 +55,55 @@ pub fn display_summary(
 
 /// Returns a string summary of the total number of failed and successful article downloads
 fn short_summary(download_count: DownloadCount) -> String {
-    // TODO: Refactor this
     if download_count.total
         != download_count.successful + download_count.failed + download_count.partial
     {
         panic!("initial_count must be equal to the sum of failed and successful count")
     }
     let get_noun = |count: usize| if count == 1 { "article" } else { "articles" };
-    if download_count.successful == download_count.total && download_count.successful == 1 {
-        "Article downloaded successfully".green().to_string()
-    } else if download_count.total == download_count.failed && download_count.failed == 1 {
-        "Article failed to download".red().to_string()
-    } else if download_count.total == download_count.partial && download_count.partial == 1 {
-        "Article partially failed to download".yellow().to_string()
-    } else if download_count.successful == download_count.total {
-        "All articles downloaded successfully".green().to_string()
-    } else if download_count.failed == download_count.total {
-        "All articles failed to download".red().to_string()
-    } else if download_count.partial == download_count.total {
-        "All articles partially failed to download"
-            .yellow()
-            .to_string()
-    } else if download_count.partial == 0 {
-        format!(
-            "{} {} downloaded successfully, {} {} failed",
-            download_count.successful,
-            get_noun(download_count.successful),
-            download_count.failed,
-            get_noun(download_count.failed)
-        )
-        .yellow()
+    let get_summary = |count, label, color: Color| {
+        if count == 0 {
+            return "".to_string();
+        };
+
+        {
+            if count == 1 && count == download_count.total {
+                "Article".to_string() + label
+            } else if count == download_count.total {
+                "All ".to_string() + get_noun(count) + label
+            } else {
+                count.to_string() + " " + get_noun(count) + label
+            }
+        }
+        .color(color)
         .to_string()
-    } else if download_count.successful == 0
-        && download_count.partial > 0
-        && download_count.failed > 0
-    {
-        format!(
-            "{} {} partially failed to download, {} {} failed",
-            download_count.partial,
-            get_noun(download_count.partial),
-            download_count.failed,
-            get_noun(download_count.failed)
-        )
-        .yellow()
-        .to_string()
-    } else if download_count.failed == 0
-        && download_count.successful > 0
-        && download_count.partial > 0
-    {
-        format!(
-            "{} {} downloaded successfully, {} {} partially failed to download",
-            download_count.successful,
-            get_noun(download_count.successful),
-            download_count.partial,
-            get_noun(download_count.partial)
-        )
-        .yellow()
-        .to_string()
+    };
+
+    let mut summary = get_summary(
+        download_count.successful,
+        " downloaded successfully",
+        Color::BrightGreen,
+    );
+
+    let partial_summary = get_summary(
+        download_count.partial,
+        " partially failed to download",
+        Color::Yellow,
+    );
+
+    if !summary.is_empty() && !partial_summary.is_empty() {
+        summary = summary + ", " + &partial_summary;
     } else {
-        format!(
-            "{} {} downloaded successfully, {} {} partially failed to download, {} {} failed",
-            download_count.successful,
-            get_noun(download_count.successful),
-            download_count.partial,
-            get_noun(download_count.partial),
-            download_count.failed,
-            get_noun(download_count.failed)
-        )
-        .yellow()
-        .to_string()
+        summary = summary + &partial_summary;
     }
+
+    let failed_summary = get_summary(download_count.failed, " failed to download", Color::Red);
+    if !summary.is_empty() && !failed_summary.is_empty() {
+        summary = summary + ", " + &failed_summary;
+    } else {
+        summary = summary + &failed_summary;
+    }
+    summary
 }
 
 struct DownloadCount {
@@ -192,7 +171,7 @@ mod tests {
     fn test_short_summary() {
         assert_eq!(
             short_summary(DownloadCount::new(1, 1, 0, 0)),
-            "Article downloaded successfully".green().to_string()
+            "Article downloaded successfully".bright_green().to_string()
         );
         assert_eq!(
             short_summary(DownloadCount::new(1, 0, 0, 1)),
@@ -200,7 +179,9 @@ mod tests {
         );
         assert_eq!(
             short_summary(DownloadCount::new(10, 10, 0, 0)),
-            "All articles downloaded successfully".green().to_string()
+            "All articles downloaded successfully"
+                .bright_green()
+                .to_string()
         );
         assert_eq!(
             short_summary(DownloadCount::new(10, 0, 0, 10)),
@@ -208,39 +189,52 @@ mod tests {
         );
         assert_eq!(
             short_summary(DownloadCount::new(10, 8, 0, 2)),
-            "8 articles downloaded successfully, 2 articles failed"
-                .yellow()
-                .to_string()
+            format!(
+                "{}, {}",
+                "8 articles downloaded successfully".bright_green(),
+                "2 articles failed to download".red()
+            )
         );
         assert_eq!(
             short_summary(DownloadCount::new(10, 1, 0, 9)),
-            "1 article downloaded successfully, 9 articles failed"
-                .yellow()
-                .to_string()
+            format!(
+                "{}, {}",
+                "1 article downloaded successfully".bright_green(),
+                "9 articles failed to download".red()
+            )
         );
         assert_eq!(
             short_summary(DownloadCount::new(7, 6, 0, 1)),
-            "6 articles downloaded successfully, 1 article failed"
-                .yellow()
-                .to_string()
+            format!(
+                "{}, {}",
+                "6 articles downloaded successfully".bright_green(),
+                "1 article failed to download".red()
+            )
         );
         assert_eq!(
             short_summary(DownloadCount::new(7, 4, 2, 1)),
-            "4 articles downloaded successfully, 2 articles partially failed to download, 1 article failed"
-                .yellow()
-                .to_string()
+            format!(
+                "{}, {}, {}",
+                "4 articles downloaded successfully".bright_green(),
+                "2 articles partially failed to download".yellow(),
+                "1 article failed to download".red()
+            )
         );
         assert_eq!(
             short_summary(DownloadCount::new(12, 6, 6, 0)),
-            "6 articles downloaded successfully, 6 articles partially failed to download"
-                .yellow()
-                .to_string()
+            format!(
+                "{}, {}",
+                "6 articles downloaded successfully".bright_green(),
+                "6 articles partially failed to download".yellow()
+            )
         );
         assert_eq!(
             short_summary(DownloadCount::new(5, 0, 4, 1)),
-            "4 articles partially failed to download, 1 article failed"
-                .yellow()
-                .to_string()
+            format!(
+                "{}, {}",
+                "4 articles partially failed to download".yellow(),
+                "1 article failed to download".red()
+            )
         );
         assert_eq!(
             short_summary(DownloadCount::new(4, 0, 4, 0)),
