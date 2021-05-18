@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::fs::File;
 
 use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
-use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
+use epub_builder::{EpubBuilder, EpubContent, TocElement, ZipLibrary};
 use indicatif::{ProgressBar, ProgressStyle};
+use kuchiki::NodeRef;
 use log::{debug, info};
 
 use crate::{
@@ -63,15 +65,22 @@ pub fn generate_epubs(
                 .enumerate()
                 .fold(&mut epub, |epub, (idx, article)| {
                     let mut article_result = || -> Result<(), PaperoniError> {
-                        let mut html_buf = Vec::new();
-                        extractor::serialize_to_xhtml(article.article(), &mut html_buf)?;
-                        let html_str = std::str::from_utf8(&html_buf)?;
-                        epub.metadata("title", replace_metadata_value(name))?;
+                        let mut xhtml_buf = Vec::new();
+                        extractor::serialize_to_xhtml(article.article(), &mut xhtml_buf)?;
+                        let xhtml_str = std::str::from_utf8(&xhtml_buf)?;
                         let section_name = article.metadata().title();
-                        epub.add_content(
-                            EpubContent::new(format!("article_{}.xhtml", idx), html_str.as_bytes())
-                                .title(replace_metadata_value(section_name)),
-                        )?;
+                        let content_url = format!("article_{}.xhtml", idx);
+                        let mut content = EpubContent::new(&content_url, xhtml_str.as_bytes())
+                            .title(replace_metadata_value(section_name));
+                        let header_level_tocs =
+                            get_header_level_toc_vec(&content_url, article.article());
+
+                        for toc_element in header_level_tocs {
+                            content = content.child(toc_element);
+                        }
+
+                        epub.metadata("title", replace_metadata_value(name))?;
+                        epub.add_content(content)?;
                         info!("Adding images for {:?}", name);
                         article.img_urls.iter().for_each(|img| {
                             // TODO: Add error handling and return errors as a vec
@@ -144,15 +153,28 @@ pub fn generate_epubs(
                     );
                     debug!("Creating {:?}", file_name);
                     let mut out_file = File::create(&file_name).unwrap();
-                    let mut html_buf = Vec::new();
-                    extractor::serialize_to_xhtml(article.article(), &mut html_buf)
+                    let mut xhtml_buf = Vec::new();
+                    extractor::serialize_to_xhtml(article.article(), &mut xhtml_buf)
                         .expect("Unable to serialize to xhtml");
-                    let html_str = std::str::from_utf8(&html_buf).unwrap();
+                    let xhtml_str = std::str::from_utf8(&xhtml_buf).unwrap();
+                    let header_level_tocs =
+                        get_header_level_toc_vec("index.xhtml", article.article());
+
                     if let Some(author) = article.metadata().byline() {
                         epub.metadata("author", replace_metadata_value(author))?;
                     }
-                    epub.metadata("title", replace_metadata_value(article.metadata().title()))?;
-                    epub.add_content(EpubContent::new("index.xhtml", html_str.as_bytes()))?;
+                    let title = replace_metadata_value(article.metadata().title());
+                    epub.metadata("title", &title)?;
+
+                    let mut content =
+                        EpubContent::new("index.xhtml", xhtml_str.as_bytes()).title(title);
+
+                    for toc_element in header_level_tocs {
+                        content = content.child(toc_element);
+                    }
+
+                    epub.add_content(content)?;
+
                     for img in &article.img_urls {
                         let mut file_path = std::env::temp_dir();
                         file_path.push(&img.0);
@@ -232,6 +254,50 @@ fn generate_appendix(articles: Vec<&Extractor>) -> String {
     template
 }
 
+/// Returns a vector of `TocElement` from a NodeRef used for adding to the Table of Contents for navigation
+fn get_header_level_toc_vec(content_url: &str, article: &NodeRef) -> Vec<TocElement> {
+    // TODO: Test this
+    let mut headers_vec = Vec::new();
+
+    let mut header_levels = HashMap::new();
+    header_levels.insert("h1", 1);
+    header_levels.insert("h2", 2);
+    header_levels.insert("h3", 3);
+
+    let headings = article
+        .select("h1, h2, h3")
+        .expect("Unable to create selector for headings");
+
+    let mut prev_toc: Option<TocElement> = None;
+
+    for heading in headings {
+        // TODO: Create a new function that adds an id attribute to heading tags before this function is called
+        let elem_attrs = heading.attributes.borrow();
+        let elem_name: &str = &heading.name.local;
+        let id = elem_attrs
+            .get("id")
+            .map(|val| val.to_string())
+            .unwrap_or(heading.text_contents().replace(" ", "-"));
+        let toc = TocElement::new(format!("{}#{}", content_url, id), heading.text_contents())
+            .level(header_levels[elem_name]);
+        if let Some(prev_toc_element) = prev_toc {
+            if prev_toc_element.level <= toc.level {
+                headers_vec.push(prev_toc_element);
+                prev_toc = Some(toc);
+            } else {
+                prev_toc = Some(prev_toc_element.child(toc))
+            }
+        } else {
+            prev_toc = Some(toc);
+        }
+    }
+
+    if let Some(toc_element) = prev_toc {
+        headers_vec.push(toc_element);
+    }
+
+    headers_vec
+}
 #[cfg(test)]
 mod test {
     use super::replace_metadata_value;
