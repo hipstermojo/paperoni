@@ -23,7 +23,7 @@ Check the [releases](https://github.com/hipstermojo/paperoni/releases) page for 
 Paperoni is published on [crates.io](https://crates.io). If you have [cargo](https://github.com/rust-lang/cargo) installed, then run:
 
 ```sh
-cargo install paperoni --version 0.4.0-alpha1
+cargo install paperoni --version 0.4.1-alpha1
 ```
 
 _Paperoni is still in alpha so the `version` flag has to be passed._
