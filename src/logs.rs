@@ -1,11 +1,9 @@
 use colored::*;
 use comfy_table::presets::UTF8_HORIZONTAL_BORDERS_ONLY;
 use comfy_table::{Cell, CellAlignment, ContentArrangement, Table};
-use directories::UserDirs;
-use flexi_logger::LogSpecBuilder;
 use log::error;
 
-use crate::{cli::AppConfig, errors::PaperoniError};
+use crate::errors::PaperoniError;
 
 pub fn display_summary(
     initial_article_count: usize,
@@ -143,47 +141,6 @@ impl DownloadCount {
         }
     }
 }
-
-pub fn init_logger(app_config: &AppConfig) {
-    match UserDirs::new() {
-        Some(user_dirs) => {
-            let home_dir = user_dirs.home_dir();
-            let paperoni_dir = home_dir.join(".paperoni");
-            let log_dir = paperoni_dir.join("logs");
-
-            let log_spec = LogSpecBuilder::new()
-                .module("paperoni", app_config.log_level())
-                .build();
-            let formatted_timestamp = app_config.start_time().format("%Y-%m-%d_%H-%M-%S");
-            let mut logger = flexi_logger::Logger::with(log_spec);
-
-            if app_config.is_logging_to_file() && (!paperoni_dir.is_dir() || !log_dir.is_dir()) {
-                match std::fs::create_dir_all(&log_dir) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        eprintln!("Unable to create paperoni directories on home directory for logging purposes\n{}",e);
-                        std::process::exit(1);
-                    }
-                };
-            }
-
-            if app_config.is_logging_to_file() {
-                logger = logger
-                    .directory(log_dir)
-                    .discriminant(formatted_timestamp.to_string())
-                    .suppress_timestamp()
-                    .log_to_file();
-            }
-
-            match logger.start() {
-                Ok(_) => (),
-                Err(e) => eprintln!("Unable to start logger!\n{}", e),
-            }
-        }
-        None => eprintln!("Unable to get user directories for logging purposes"),
-    };
-}
-
 #[cfg(test)]
 mod tests {
     use super::{short_summary, DownloadCount};

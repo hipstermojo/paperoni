@@ -48,15 +48,20 @@ USAGE:
     paperoni [OPTIONS] [urls]...
 
 OPTIONS:
-    -f, --file <file>            Input file containing links
-    -h, --help                   Prints help information
-        --log-to-file            Enables logging of events to a file located in .paperoni/logs with a default log level
-                                 of debug. Use -v to specify the logging level
-        --max_conn <max_conn>    The maximum number of concurrent HTTP connections when downloading articles. Default is
-                                 8
-        --merge <output_name>    Merge multiple articles into a single epub
-    -V, --version                Prints version information
-    -v                           Enables logging of events and set the verbosity level. Use -h to read on its usage
+    -f, --file <file>                            Input file containing links
+    -h, --help                                   Prints help information
+        --log-to-file
+            Enables logging of events to a file located in .paperoni/logs with a default log level of debug. Use -v to
+            specify the logging level
+        --max_conn <max_conn>
+            The maximum number of concurrent HTTP connections when downloading articles. Default is 8
+
+    -o, --output_directory <output_directory>    Directory for store output epub documents
+        --merge <output_name>                    Merge multiple articles into a single epub
+    -V, --version                                Prints version information
+    -v
+            Enables logging of events and set the verbosity level. Use --help to read on its usage
+
 
 ARGS:
     <urls>...    Urls of web articles
