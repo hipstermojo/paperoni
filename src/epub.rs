@@ -16,7 +16,7 @@ pub fn generate_epubs(
     app_config: &AppConfig,
     successful_articles_table: &mut Table,
 ) -> Result<(), Vec<PaperoniError>> {
-    let bar = if app_config.can_disable_progress_bar() {
+    let bar = if app_config.can_disable_progress_bar {
         ProgressBar::hidden()
     } else {
         let enabled_bar = ProgressBar::new(articles.len() as u64);
@@ -32,8 +32,8 @@ pub fn generate_epubs(
 
     let mut errors: Vec<PaperoniError> = Vec::new();
 
-    match app_config.merged() {
-        Some(name) => {
+    match app_config.merged {
+        Some(ref name) => {
             successful_articles_table.set_header(vec![Cell::new("Table of Contents")
                 .add_attribute(Attribute::Bold)
                 .set_alignment(CellAlignment::Center)
@@ -103,7 +103,7 @@ pub fn generate_epubs(
                     .title(replace_metadata_value("Article Sources")),
             ) {
                 let mut paperoni_err: PaperoniError = err.into();
-                paperoni_err.set_article_source(name);
+                paperoni_err.set_article_source(&name);
                 errors.push(paperoni_err);
                 return Err(errors);
             }
@@ -113,7 +113,7 @@ pub fn generate_epubs(
                 Ok(_) => (),
                 Err(err) => {
                     let mut paperoni_err: PaperoniError = err.into();
-                    paperoni_err.set_article_source(name);
+                    paperoni_err.set_article_source(&name);
                     errors.push(paperoni_err);
                     return Err(errors);
                 }
@@ -135,7 +135,8 @@ pub fn generate_epubs(
                 let mut result = || -> Result<(), PaperoniError> {
                     let mut epub = EpubBuilder::new(ZipLibrary::new()?)?;
                     let file_name = format!(
-                        "{}.epub",
+                        "{}/{}.epub",
+                        app_config.output_directory.as_deref().unwrap_or("."),
                         article
                             .metadata()
                             .title()

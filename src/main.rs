@@ -1,6 +1,8 @@
 #[macro_use]
 extern crate lazy_static;
 
+use std::process::exit;
+
 use async_std::stream;
 use async_std::task;
 use comfy_table::presets::{UTF8_FULL, UTF8_HORIZONTAL_BORDERS_ONLY};
@@ -27,9 +29,15 @@ use http::{download_images, fetch_html};
 use logs::display_summary;
 
 fn main() {
-    let app_config = cli::cli_init();
+    let app_config = match cli::AppConfig::init_with_cli() {
+        Ok(app_config) => app_config,
+        Err(err) => {
+            eprintln!("{}", err);
+            exit(1);
+        }
+    };
 
-    if !app_config.urls().is_empty() {
+    if !app_config.urls.is_empty() {
         download(app_config);
     }
 }
@@ -37,10 +45,10 @@ fn main() {
 fn download(app_config: AppConfig) {
     let mut errors = Vec::new();
     let mut partial_download_count: usize = 0;
-    let bar = if app_config.can_disable_progress_bar() {
+    let bar = if app_config.can_disable_progress_bar {
         ProgressBar::hidden()
     } else {
-        let enabled_bar = ProgressBar::new(app_config.urls().len() as u64);
+        let enabled_bar = ProgressBar::new(app_config.urls.len() as u64);
         let style = ProgressStyle::default_bar().template(
         "{spinner:.cyan} [{elapsed_precise}] {bar:40.white} {:>8} link {pos}/{len:7} {msg:.yellow/white}",
     );
@@ -49,8 +57,8 @@ fn download(app_config: AppConfig) {
         enabled_bar
     };
     let articles = task::block_on(async {
-        let urls_iter = app_config.urls().iter().map(|url| fetch_html(url));
-        let mut responses = stream::from_iter(urls_iter).buffered(app_config.max_conn());
+        let urls_iter = app_config.urls.iter().map(|url| fetch_html(url));
+        let mut responses = stream::from_iter(urls_iter).buffered(app_config.max_conn);
         let mut articles = Vec::new();
         while let Some(fetch_result) = responses.next().await {
             match fetch_result {
@@ -109,15 +117,15 @@ fn download(app_config: AppConfig) {
     };
     let has_errors = !errors.is_empty();
     display_summary(
-        app_config.urls().len(),
+        app_config.urls.len(),
         succesful_articles_table,
         partial_download_count,
         errors,
     );
-    if app_config.is_logging_to_file() {
+    if app_config.is_logging_to_file {
         println!(
             "Log written to paperoni_{}.log\n",
-            app_config.start_time().format("%Y-%m-%d_%H-%M-%S")
+            app_config.start_time.format("%Y-%m-%d_%H-%M-%S")
         );
     }
     if has_errors {

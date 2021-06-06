@@ -153,7 +153,11 @@ pub async fn download_images(
         })
         .enumerate()
         .map(|(img_idx, (url, req))| async move {
-            bar.set_message(format!("Downloading images [{}/{}]", img_idx + 1, img_count).as_str());
+            bar.set_message(format!(
+                "Downloading images [{}/{}]",
+                img_idx + 1,
+                img_count
+            ));
             match req.await {
                 Ok(mut img_response) => {
                     let process_response =
@@ -234,9 +238,9 @@ fn get_absolute_url(url: &str, request_url: &Url) -> String {
         .unwrap()
         .join(url)
         .unwrap()
-        .into_string()
+        .into()
     } else {
-        request_url.join(url).unwrap().into_string()
+        request_url.join(url).unwrap().into()
     }
 }
 
