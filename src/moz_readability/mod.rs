@@ -1609,13 +1609,8 @@ impl Readability {
             //   // class name "comment", etc), and turn divs into P tags where they have been
             //   // used inappropriately (as in, where they contain no other block level elements.)
             let mut elements_to_score: Vec<NodeRef> = Vec::new();
-            let mut node = Some(
-                self.root_node
-                    .select_first("html")
-                    .unwrap()
-                    .as_node()
-                    .clone(),
-            );
+            let mut node = self.root_node.select_first("html")
+                .ok().map(|n| n.as_node().clone());
 
             while let Some(node_ref) = node {
                 let node_elem = node_ref.as_element().unwrap();
