@@ -254,55 +254,80 @@ fn generate_appendix(articles: Vec<&Extractor>) -> String {
     template
 }
 
+/// Adds an id attribute to header elements and assigns a value based on
+/// the hash of the text content. Headers with id attributes are not modified.
+/// The headers here are known to have text because the grabbed article from
+/// readability removes headers with no text.
+fn generate_header_ids(root_node: &NodeRef) {
+    let headers = root_node
+        .select("h1, h2, h3, h4")
+        .expect("Unable to create selector for headings");
+    let headers_no_id = headers.filter(|node_data_ref| {
+        let attrs = node_data_ref.attributes.borrow();
+        !attrs.contains("id")
+    });
+    for header in headers_no_id {
+        let mut attrs = header.attributes.borrow_mut();
+        let text = header.text_contents();
+        // The value of the id begins with an underscore because the hexadecimal
+        // digest might start with a number which would make it an invalid id
+        // when querying with selectors
+        let value = format!("_{:x}", md5::compute(text));
+        attrs.insert("id", value);
+    }
+}
+
 /// Returns a vector of `TocElement` from a NodeRef used for adding to the Table of Contents for navigation
 fn get_header_level_toc_vec(content_url: &str, article: &NodeRef) -> Vec<TocElement> {
-    // TODO: Test this
+    generate_header_ids(article);
+
     let mut headers_vec = Vec::new();
 
     let mut header_levels = HashMap::new();
     header_levels.insert("h1", 1);
     header_levels.insert("h2", 2);
     header_levels.insert("h3", 3);
+    header_levels.insert("h4", 4);
 
     let headings = article
-        .select("h1, h2, h3")
+        .select("h1, h2, h3, h4")
         .expect("Unable to create selector for headings");
 
-    let mut prev_toc: Option<TocElement> = None;
+    let mut last_toc_elem_level: Option<i32> = None;
 
     for heading in headings {
         // TODO: Create a new function that adds an id attribute to heading tags before this function is called
         let elem_attrs = heading.attributes.borrow();
         let elem_name: &str = &heading.name.local;
-        let id = elem_attrs
-            .get("id")
-            .map(|val| val.to_string())
-            .unwrap_or(heading.text_contents().replace(" ", "-"));
-        let toc = TocElement::new(format!("{}#{}", content_url, id), heading.text_contents())
-            .level(header_levels[elem_name]);
-        if let Some(prev_toc_element) = prev_toc {
-            if prev_toc_element.level <= toc.level {
-                headers_vec.push(prev_toc_element);
-                prev_toc = Some(toc);
+        let elem_level = header_levels[elem_name];
+        let id = elem_attrs.get("id").map(|val| val.to_string()).unwrap();
+        let toc = TocElement::new(
+            format!("{}#{}", content_url, id),
+            replace_escaped_characters(&heading.text_contents()),
+        );
+
+        if let Some(last_elem_level) = last_toc_elem_level {
+            if elem_level <= last_elem_level {
+                last_toc_elem_level = Some(elem_level);
+                headers_vec.push(toc);
             } else {
-                prev_toc = Some(prev_toc_element.child(toc))
+                match headers_vec.last_mut() {
+                    Some(toc_elem) => *toc_elem = toc_elem.clone().child(toc),
+                    _ => unreachable!(),
+                }
             }
         } else {
-            prev_toc = Some(toc);
+            last_toc_elem_level = Some(elem_level);
+            headers_vec.push(toc);
         }
     }
-
-    if let Some(toc_element) = prev_toc {
-        headers_vec.push(toc_element);
-    }
-
     headers_vec
 }
 #[cfg(test)]
 mod test {
     use kuchiki::traits::*;
 
-    use super::{get_header_level_toc_vec, replace_escaped_characters};
+    use super::{generate_header_ids, get_header_level_toc_vec, replace_escaped_characters};
 
     #[test]
     fn test_replace_escaped_characters() {
@@ -318,5 +343,138 @@ mod test {
             replace_escaped_characters(value),
             "Author Name &lt;author@mail.example&gt;"
         );
+    }
+
+    #[test]
+    fn test_generate_header_ids() {
+        let html_str = r#"
+<!DOCTYPE html>
+<html>
+    <body>
+        <h1>Heading 1</h1>
+        <h2 id="heading-2">Heading 2</h2>
+        <h2 id="heading-2-again">Heading 2 again</h2>
+        <h4>Heading 4</h4>
+        <h1>Heading 1 again</h1>
+        <h3 class="heading">Heading 3</h3>
+    </body>
+</html>
+        "#;
+        let doc = kuchiki::parse_html().one(html_str);
+        generate_header_ids(&doc);
+
+        let mut headers = doc.select("h1, h2, h3, h4").unwrap();
+        let all_headers_have_ids = headers.all(|node_data_ref| {
+            let attrs = node_data_ref.attributes.borrow();
+            if let Some(id) = attrs.get("id") {
+                !id.trim().is_empty()
+            } else {
+                false
+            }
+        });
+        assert_eq!(true, all_headers_have_ids);
+
+        let selector = format!("h1#_{:x}", md5::compute("Heading 1"));
+        assert_eq!(true, doc.select_first(&selector).is_ok());
+
+        let selector = format!("h1#_{:x}", md5::compute("Heading 1 again"));
+        assert_eq!(true, doc.select_first(&selector).is_ok());
+
+        let selector = "h2#heading-2-again";
+        assert_eq!(true, doc.select_first(selector).is_ok());
+    }
+
+    #[test]
+    fn test_get_header_level_toc_vec() {
+        // NOTE: Due to `TocElement` not implementing PartialEq, the tests here
+        // will need to be manually written to cover for this
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <p>Lorem ipsum</p>
+            </body>
+        </html>
+        "#;
+        let doc = kuchiki::parse_html().one(html_str);
+
+        let toc_vec = get_header_level_toc_vec("index.xhtml", &doc);
+        assert_eq!(0, toc_vec.len());
+
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <h1 id="heading-1">Heading 1</h1>
+                <p>Lorem ipsum</p>
+                <div>
+                    <h2 id="heading-2">Heading 2</h2>
+                    <p>Lorem ipsum</p>
+                    <p>Lorem ipsum</p>
+                </div>
+                <h3 id="subheading-3">Subheading 3</h2>
+                <p>Lorem ipsum</p>
+                <h1 id="heading-2">Second Heading 1</h2>
+                <p>Lorem ipsum</p>
+            </body>
+        </html>
+        "#;
+        let doc = kuchiki::parse_html().one(html_str);
+
+        let toc_vec = get_header_level_toc_vec("index.xhtml", &doc);
+        assert_eq!(2, toc_vec.len());
+
+        let first_h1_toc = toc_vec.first().unwrap();
+        assert_eq!("Heading 1", first_h1_toc.title);
+        assert_eq!(1, first_h1_toc.children.len());
+
+        let h2_toc = first_h1_toc.children.first().unwrap();
+        assert_eq!("Heading 2", h2_toc.title);
+        assert_eq!(1, h2_toc.children.len());
+
+        let h3_toc = h2_toc.children.first().unwrap();
+        assert_eq!("Subheading 3", h3_toc.title);
+        assert_eq!(0, h3_toc.children.len());
+
+        let last_h1_toc = toc_vec.last().unwrap();
+        assert_eq!("Second Heading 1", last_h1_toc.title);
+        assert_eq!(0, last_h1_toc.children.len());
+
+        let html_str = r#"
+        <!DOCTYPE html>
+        <html>
+            <body>
+                <h1 id="heading-1">Heading 1</h1>
+                <p>Lorem ipsum</p>
+                <div>
+                    <h2 id="heading-2">Heading 2</h2>
+                    <p>Lorem ipsum</p>
+                    <p>Lorem ipsum</p>
+                    <h3 id="subheading-3">Subheading 3</h2>
+                    <p>Lorem ipsum</p>
+                </div>
+                <h2 id="heading-2">Heading 2</h2>
+                <p>Lorem ipsum</p>
+                <h4 id="subheading-4">Subheading 4</h4>
+                <h2 id="conclusion">Conclusion</h2>
+            </body>
+        </html>
+        "#;
+        let doc = kuchiki::parse_html().one(html_str);
+
+        let toc_vec = get_header_level_toc_vec("index.xhtml", &doc);
+        assert_eq!(1, toc_vec.len());
+
+        let h1_toc = toc_vec.first().unwrap();
+        assert_eq!("Heading 1", h1_toc.title);
+        assert_eq!(3, h1_toc.children.len());
+
+        let first_h2_toc = h1_toc.children.first().unwrap();
+        assert_eq!("Heading 2", first_h2_toc.title);
+        assert_eq!(1, first_h2_toc.children.len());
+
+        let h3_toc = first_h2_toc.children.first().unwrap();
+        assert_eq!("Subheading 3", h3_toc.title);
+        assert_eq!(0, h3_toc.children.len());
     }
 }
