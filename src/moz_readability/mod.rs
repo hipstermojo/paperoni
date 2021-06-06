@@ -1610,10 +1610,8 @@ impl Readability {
             //   // used inappropriately (as in, where they contain no other block level elements.)
             let mut elements_to_score: Vec<NodeRef> = Vec::new();
 
-            let mut node: Option<NodeRef> = match self.root_node.select_first("html") {
-                Ok(n) => Some(n.as_node().clone()),
-                Err(_e) => None
-            };
+            let mut node = self.root_node.select_first("html")
+                .ok().map(|n| n.as_node().clone());
 
             while let Some(node_ref) = node {
                 let node_elem = node_ref.as_element().unwrap();
