@@ -132,8 +132,10 @@ impl From<std::str::Utf8Error> for PaperoniError {
 pub enum LogError {
     #[error(transparent)]
     FlexiError(#[from] FlexiLoggerError),
-    #[error("Wrong log directory: {0}")]
-    LogDirectoryError(String),
+    #[error("Unable to get user directories for logging purposes")]
+    UserDirectoriesError,
+    #[error("Can't create log directory: {0}")]
+    CreateLogDirectoryError(#[from] std::io::Error),
 }
 
 #[derive(Debug, Error)]

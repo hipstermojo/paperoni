@@ -166,12 +166,10 @@ pub fn init_logger(
             let formatted_timestamp = start_time.format("%Y-%m-%d_%H-%M-%S");
             let mut logger = flexi_logger::Logger::with(log_spec);
 
-            if is_logging_to_file && (!paperoni_dir.is_dir() || !log_dir.is_dir()) {
-                if let Err(e) = fs::create_dir_all(&log_dir) {
-                    return Err(Error::LogDirectoryError(format!("Unable to create paperoni directories on home directory for logging purposes\n{}",e)));
-                }
-            }
             if is_logging_to_file {
+                if !paperoni_dir.is_dir() || !log_dir.is_dir() {
+                    fs::create_dir_all(&log_dir)?;
+                }
                 logger = logger
                     .directory(log_dir)
                     .discriminant(formatted_timestamp.to_string())
@@ -181,9 +179,7 @@ pub fn init_logger(
             logger.start()?;
             Ok(())
         }
-        None => Err(Error::LogDirectoryError(
-            "Unable to get user directories for logging purposes".to_string(),
-        )),
+        None => Err(Error::UserDirectoriesError),
     }
 }
 
