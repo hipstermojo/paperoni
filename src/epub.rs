@@ -71,7 +71,7 @@ pub fn generate_epubs(
                         let section_name = article.metadata().title();
                         let content_url = format!("article_{}.xhtml", idx);
                         let mut content = EpubContent::new(&content_url, xhtml_str.as_bytes())
-                            .title(replace_metadata_value(section_name));
+                            .title(replace_escaped_characters(section_name));
                         let header_level_tocs =
                             get_header_level_toc_vec(&content_url, article.article());
 
@@ -79,7 +79,7 @@ pub fn generate_epubs(
                             content = content.child(toc_element);
                         }
 
-                        epub.metadata("title", replace_metadata_value(name))?;
+                        epub.metadata("title", replace_escaped_characters(name))?;
                         epub.add_content(content)?;
                         info!("Adding images for {:?}", name);
                         article.img_urls.iter().for_each(|img| {
@@ -109,7 +109,7 @@ pub fn generate_epubs(
             let appendix = generate_appendix(articles.iter().collect());
             if let Err(err) = epub.add_content(
                 EpubContent::new("appendix.xhtml", appendix.as_bytes())
-                    .title(replace_metadata_value("Article Sources")),
+                    .title(replace_escaped_characters("Article Sources")),
             ) {
                 let mut paperoni_err: PaperoniError = err.into();
                 paperoni_err.set_article_source(name);
@@ -161,9 +161,9 @@ pub fn generate_epubs(
                         get_header_level_toc_vec("index.xhtml", article.article());
 
                     if let Some(author) = article.metadata().byline() {
-                        epub.metadata("author", replace_metadata_value(author))?;
+                        epub.metadata("author", replace_escaped_characters(author))?;
                     }
-                    let title = replace_metadata_value(article.metadata().title());
+                    let title = replace_escaped_characters(article.metadata().title());
                     epub.metadata("title", &title)?;
 
                     let mut content =
@@ -189,7 +189,7 @@ pub fn generate_epubs(
                     let appendix = generate_appendix(vec![&article]);
                     epub.add_content(
                         EpubContent::new("appendix.xhtml", appendix.as_bytes())
-                            .title(replace_metadata_value("Article Source")),
+                            .title(replace_escaped_characters("Article Source")),
                     )?;
                     epub.generate(&mut out_file)?;
                     bar.inc(1);
@@ -216,7 +216,7 @@ pub fn generate_epubs(
 }
 
 /// Replaces characters that have to be escaped before adding to the epub's metadata
-fn replace_metadata_value(value: &str) -> String {
+fn replace_escaped_characters(value: &str) -> String {
     value
         .replace("&", "&amp;")
         .replace("<", "&lt;")
@@ -235,8 +235,8 @@ fn generate_appendix(articles: Vec<&Extractor>) -> String {
             };
             format!(
                 "<a href=\"{}\">{}</a><br></br>",
-                replace_metadata_value(&article.url),
-                replace_metadata_value(article_name)
+                replace_escaped_characters(&article.url),
+                replace_escaped_characters(article_name)
             )
         })
         .collect();
@@ -300,20 +300,22 @@ fn get_header_level_toc_vec(content_url: &str, article: &NodeRef) -> Vec<TocElem
 }
 #[cfg(test)]
 mod test {
-    use super::replace_metadata_value;
+    use kuchiki::traits::*;
+
+    use super::{get_header_level_toc_vec, replace_escaped_characters};
 
     #[test]
-    fn test_replace_metadata_value() {
+    fn test_replace_escaped_characters() {
         let mut value = "Lorem ipsum";
-        assert_eq!(replace_metadata_value(value), "Lorem ipsum");
+        assert_eq!(replace_escaped_characters(value), "Lorem ipsum");
         value = "Memory safe > memory unsafe";
         assert_eq!(
-            replace_metadata_value(value),
+            replace_escaped_characters(value),
             "Memory safe &gt; memory unsafe"
         );
         value = "Author Name <author@mail.example>";
         assert_eq!(
-            replace_metadata_value(value),
+            replace_escaped_characters(value),
             "Author Name &lt;author@mail.example&gt;"
         );
     }
