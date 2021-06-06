@@ -1,14 +1,10 @@
-use std::{
-    collections::HashSet,
-    num::{NonZeroUsize, ParseIntError},
-    path::Path,
-};
+use std::{collections::BTreeSet, fs, num::NonZeroUsize, path::Path};
 
 use chrono::{DateTime, Local};
 use clap::{App, AppSettings, Arg, ArgMatches};
-use flexi_logger::{FlexiLoggerError, LevelFilter as LogLevel};
-use std::fs;
-use thiserror::Error;
+use flexi_logger::LevelFilter as LogLevel;
+
+type Error = crate::errors::CliError<AppConfigBuilderError>;
 
 const DEFAULT_MAX_CONN: usize = 8;
 
@@ -24,28 +20,6 @@ pub struct AppConfig {
     pub can_disable_progress_bar: bool,
     pub start_time: DateTime<Local>,
     pub is_logging_to_file: bool,
-}
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("Failed to open file with urls: {0}")]
-    UrlFileError(#[from] std::io::Error),
-    #[error("Failed to parse max connection value: {0}")]
-    InvalidMaxConnectionCount(#[from] ParseIntError),
-    #[error("No urls for parse")]
-    NoUrls,
-    #[error("No urls for parse")]
-    AppBuildError(#[from] AppConfigBuilderError),
-    #[error("Invalid output path name for merged epubs: {0}")]
-    InvalidOutputPath(String),
-    #[error("Log error: {0}")]
-    LogDirectoryError(String),
-    #[error(transparent)]
-    LogError(#[from] FlexiLoggerError),
-    #[error("Wrong output directory")]
-    WrongOutputDirectory,
-    #[error("Output directory not exists")]
-    OutputDirectoryNotExists,
 }
 
 impl AppConfig {
@@ -73,11 +47,10 @@ impl AppConfig {
         )
         .arg(
             Arg::with_name("output_directory")
-                .long("output_directory")
+                .long("output-directory")
                 .short("o")
-                .help("Directory for store output epub documents")
+                .help("Directory to store output epub documents")
                 .conflicts_with("output_name")
-                .long_help("Directory for saving epub documents")
                 .takes_value(true),
         )
         .arg(
@@ -128,40 +101,10 @@ impl AppConfig {
     }
 
     fn init_logger(self) -> Result<Self, Error> {
-        use directories::UserDirs;
-        use flexi_logger::LogSpecBuilder;
-
-        match UserDirs::new() {
-            Some(user_dirs) => {
-                let home_dir = user_dirs.home_dir();
-                let paperoni_dir = home_dir.join(".paperoni");
-                let log_dir = paperoni_dir.join("logs");
-
-                let log_spec = LogSpecBuilder::new()
-                    .module("paperoni", self.log_level)
-                    .build();
-                let formatted_timestamp = self.start_time.format("%Y-%m-%d_%H-%M-%S");
-                let mut logger = flexi_logger::Logger::with(log_spec);
-
-                if self.is_logging_to_file && (!paperoni_dir.is_dir() || !log_dir.is_dir()) {
-                    if let Err(e) = fs::create_dir_all(&log_dir) {
-                        return Err(Error::LogDirectoryError(format!("Unable to create paperoni directories on home directory for logging purposes\n{}",e)));
-                    }
-                }
-                if self.is_logging_to_file {
-                    logger = logger
-                        .directory(log_dir)
-                        .discriminant(formatted_timestamp.to_string())
-                        .suppress_timestamp()
-                        .log_to_file();
-                }
-                logger.start()?;
-                Ok(self)
-            }
-            None => Err(Error::LogDirectoryError(
-                "Unable to get user directories for logging purposes".to_string(),
-            )),
-        }
+        use crate::logs;
+        logs::init_logger(self.log_level, &self.start_time, self.is_logging_to_file)
+            .map(|_| self)
+            .map_err(Error::LogError)
     }
 }
 
@@ -181,21 +124,20 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                         None
                     }
                 };
-                match (
-                    arg_matches
-                        .values_of("urls")
-                        .and_then(|urls| urls.map(url_filter).collect::<Option<HashSet<_>>>()),
-                    arg_matches
-                        .value_of("file")
-                        .map(fs::read_to_string)
-                        .transpose()?
-                        .and_then(|content| {
-                            content
-                                .lines()
-                                .map(url_filter)
-                                .collect::<Option<HashSet<_>>>()
-                        }),
-                ) {
+                let direct_urls = arg_matches
+                    .values_of("urls")
+                    .and_then(|urls| urls.map(url_filter).collect::<Option<BTreeSet<_>>>());
+                let file_urls = arg_matches
+                    .value_of("file")
+                    .map(fs::read_to_string)
+                    .transpose()?
+                    .and_then(|content| {
+                        content
+                            .lines()
+                            .map(url_filter)
+                            .collect::<Option<BTreeSet<_>>>()
+                    });
+                match (direct_urls, file_urls) {
                     (Some(direct_urls), Some(file_urls)) => Ok(direct_urls
                         .union(&file_urls)
                         .map(ToOwned::to_owned)
@@ -219,7 +161,7 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                 3 => LogLevel::Info,
                 4..=u64::MAX => LogLevel::Debug,
             })
-            .is_logging_to_file(arg_matches.is_present("log-to_file"))
+            .is_logging_to_file(arg_matches.is_present("log-to-file"))
             .output_directory(
                 arg_matches
                     .value_of("output_directory")
@@ -242,6 +184,9 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
 
 impl AppConfigBuilder {
     pub fn try_init(&self) -> Result<AppConfig, Error> {
-        self.build()?.init_logger()?.init_merge_file()
+        self.build()
+            .map_err(Error::AppBuildError)?
+            .init_logger()?
+            .init_merge_file()
     }
 }

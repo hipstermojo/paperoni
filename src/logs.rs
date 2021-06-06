@@ -1,6 +1,10 @@
+use std::fs;
+
+use chrono::{DateTime, Local};
 use colored::*;
 use comfy_table::presets::UTF8_HORIZONTAL_BORDERS_ONLY;
 use comfy_table::{Cell, CellAlignment, ContentArrangement, Table};
+use flexi_logger::LevelFilter;
 use log::error;
 
 use crate::errors::PaperoniError;
@@ -141,6 +145,48 @@ impl DownloadCount {
         }
     }
 }
+
+use crate::errors::LogError as Error;
+
+pub fn init_logger(
+    log_level: LevelFilter,
+    start_time: &DateTime<Local>,
+    is_logging_to_file: bool,
+) -> Result<(), Error> {
+    use directories::UserDirs;
+    use flexi_logger::LogSpecBuilder;
+
+    match UserDirs::new() {
+        Some(user_dirs) => {
+            let home_dir = user_dirs.home_dir();
+            let paperoni_dir = home_dir.join(".paperoni");
+            let log_dir = paperoni_dir.join("logs");
+
+            let log_spec = LogSpecBuilder::new().module("paperoni", log_level).build();
+            let formatted_timestamp = start_time.format("%Y-%m-%d_%H-%M-%S");
+            let mut logger = flexi_logger::Logger::with(log_spec);
+
+            if is_logging_to_file && (!paperoni_dir.is_dir() || !log_dir.is_dir()) {
+                if let Err(e) = fs::create_dir_all(&log_dir) {
+                    return Err(Error::LogDirectoryError(format!("Unable to create paperoni directories on home directory for logging purposes\n{}",e)));
+                }
+            }
+            if is_logging_to_file {
+                logger = logger
+                    .directory(log_dir)
+                    .discriminant(formatted_timestamp.to_string())
+                    .suppress_timestamp()
+                    .log_to_file();
+            }
+            logger.start()?;
+            Ok(())
+        }
+        None => Err(Error::LogDirectoryError(
+            "Unable to get user directories for logging purposes".to_string(),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{short_summary, DownloadCount};
