@@ -279,48 +279,101 @@ fn generate_header_ids(root_node: &NodeRef) {
 
 /// Returns a vector of `TocElement` from a NodeRef used for adding to the Table of Contents for navigation
 fn get_header_level_toc_vec(content_url: &str, article: &NodeRef) -> Vec<TocElement> {
-    generate_header_ids(article);
+    // Depth starts from 1
+    const HEADER_LEVEL_MAX_DEPTH: usize = 4;
+    let mut headers_vec: Vec<TocElement> = Vec::new();
 
-    let mut headers_vec = Vec::new();
-
-    let mut header_levels = HashMap::new();
+    let mut header_levels = HashMap::with_capacity(HEADER_LEVEL_MAX_DEPTH);
     header_levels.insert("h1", 1);
     header_levels.insert("h2", 2);
     header_levels.insert("h3", 3);
     header_levels.insert("h4", 4);
 
+    generate_header_ids(article);
+
     let headings = article
         .select("h1, h2, h3, h4")
         .expect("Unable to create selector for headings");
 
-    let mut last_toc_elem_level: Option<i32> = None;
+    // The header list will be generated using some sort of backtracking algorithm
+    // There will be a stack of maximum size 4 (since it only goes to h4 now)
+    let mut stack: Vec<Option<TocElement>> = std::iter::repeat(None)
+        .take(HEADER_LEVEL_MAX_DEPTH)
+        .collect::<_>();
 
     for heading in headings {
-        // TODO: Create a new function that adds an id attribute to heading tags before this function is called
-        let elem_attrs = heading.attributes.borrow();
         let elem_name: &str = &heading.name.local;
-        let elem_level = header_levels[elem_name];
-        let id = elem_attrs.get("id").map(|val| val.to_string()).unwrap();
-        let toc = TocElement::new(
-            format!("{}#{}", content_url, id),
-            replace_escaped_characters(&heading.text_contents()),
-        );
+        let attrs = heading.attributes.borrow();
+        let id = attrs
+            .get("id")
+            .map(ToOwned::to_owned)
+            .expect("Unable to get id value in get_header_level_toc_vec");
+        let url = format!("{}#{}", content_url, id);
 
-        if let Some(last_elem_level) = last_toc_elem_level {
-            if elem_level <= last_elem_level {
-                last_toc_elem_level = Some(elem_level);
-                headers_vec.push(toc);
+        let level = header_levels[elem_name];
+        let index = level - 1;
+
+        if let Some(mut existing_toc) = stack.get_mut(index).take().cloned().flatten() {
+            // If a toc element already exists at that header level, consume all the toc elements
+            // of a lower hierarchy e.g if the existing toc is a h2, then the h3 and h4 in the stack
+            // will be consumed.
+            // We collapse the children by folding from the right to the left of the stack.
+            let descendants_levels = HEADER_LEVEL_MAX_DEPTH - level;
+            let folded_descendants = stack
+                .iter_mut()
+                .rev()
+                .take(descendants_levels)
+                .map(|toc_elem| toc_elem.take())
+                .filter(|toc_elem| toc_elem.is_some())
+                .map(|toc_elem| toc_elem.unwrap())
+                .reduce(|child, parent| parent.child(child));
+
+            if let Some(child) = folded_descendants {
+                existing_toc = existing_toc.child(child);
+            };
+
+            // Find the nearest ancestor to embed into.
+            // If this toc_elem was a h1, then just add it to the headers_vec
+            if index == 0 {
+                headers_vec.push(existing_toc);
             } else {
-                match headers_vec.last_mut() {
-                    Some(toc_elem) => *toc_elem = toc_elem.clone().child(toc),
-                    _ => unreachable!(),
+                // Otherwise, find the nearest ancestor to add it to. If none exists, add it to the headers_vec
+                let first_ancestor = stack
+                    .iter_mut()
+                    .take(level - 1)
+                    .map(|toc_elem| toc_elem.as_mut())
+                    .rfind(|toc_elem| toc_elem.is_some())
+                    .flatten();
+
+                match first_ancestor {
+                    Some(ancestor_toc_elem) => {
+                        *ancestor_toc_elem = ancestor_toc_elem.clone().child(existing_toc);
+                    }
+                    None => {
+                        headers_vec.push(existing_toc);
+                    }
                 }
             }
-        } else {
-            last_toc_elem_level = Some(elem_level);
-            headers_vec.push(toc);
+        }
+
+        if let Some(toc_elem) = stack.get_mut(index) {
+            *toc_elem = Some(TocElement::new(
+                url,
+                replace_escaped_characters(&heading.text_contents()),
+            ));
         }
     }
+
+    let folded_stack = stack
+        .into_iter()
+        .rev()
+        .filter(|toc_elem| toc_elem.is_some())
+        .map(|opt_toc_elem| opt_toc_elem.unwrap())
+        .reduce(|child, parent| parent.child(child));
+    if let Some(toc_elem) = folded_stack {
+        headers_vec.push(toc_elem)
+    }
+
     headers_vec
 }
 #[cfg(test)]
