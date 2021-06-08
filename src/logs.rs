@@ -12,9 +12,10 @@ use crate::errors::PaperoniError;
 pub fn display_summary(
     initial_article_count: usize,
     succesful_articles_table: Table,
-    partial_downloads_count: usize,
+    partial_downloads: Vec<PartialDownload>,
     errors: Vec<PaperoniError>,
 ) {
+    let partial_downloads_count = partial_downloads.len();
     let successfully_downloaded_count =
         initial_article_count - partial_downloads_count - errors.len();
 
@@ -32,6 +33,24 @@ pub fn display_summary(
     if successfully_downloaded_count > 0 {
         println!("{}", succesful_articles_table);
     }
+
+    if partial_downloads_count > 0 {
+        println!("\n{}", "Partially failed downloads".yellow().bold());
+        let mut table_partial = Table::new();
+        table_partial
+            .load_preset(UTF8_HORIZONTAL_BORDERS_ONLY)
+            .set_header(vec![
+                Cell::new("Link").set_alignment(CellAlignment::Center),
+                Cell::new("Title").set_alignment(CellAlignment::Center),
+            ])
+            .set_content_arrangement(ContentArrangement::Dynamic);
+
+        for partial in partial_downloads {
+            table_partial.add_row(vec![&partial.link, &partial.title]);
+        }
+        println!("{}", table_partial);
+    }
+
     if !errors.is_empty() {
         println!("\n{}", "Failed article downloads".bright_red().bold());
         let mut table_failed = Table::new();
@@ -126,6 +145,7 @@ impl DownloadCount {
 }
 
 use crate::errors::LogError as Error;
+use crate::http::PartialDownload;
 
 pub fn init_logger(
     log_level: LevelFilter,

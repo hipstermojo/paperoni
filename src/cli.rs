@@ -47,7 +47,7 @@ impl AppConfig {
         )
         .arg(
             Arg::with_name("output_directory")
-                .long("output-directory")
+                .long("output-dir")
                 .short("o")
                 .help("Directory to store output epub documents")
                 .conflicts_with("output_name")
@@ -61,7 +61,7 @@ impl AppConfig {
                 .conflicts_with("output_directory")
                 .takes_value(true),
         ).arg(
-            Arg::with_name("max_conn")
+            Arg::with_name("max-conn")
                 .long("max_conn")
                 .help("The maximum number of concurrent HTTP connections when downloading articles. Default is 8")
                 .long_help("The maximum number of concurrent HTTP connections when downloading articles. Default is 8.\nNOTE: It is advised to use as few connections as needed i.e between 1 and 50. Using more connections can end up overloading your network card with too many concurrent requests.")
@@ -146,7 +146,7 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                     (None, None) => Err(Error::NoUrls),
                 }
             }?)
-            .max_conn(match arg_matches.value_of("max_conn") {
+            .max_conn(match arg_matches.value_of("max-conn") {
                 Some(max_conn) => max_conn.parse::<NonZeroUsize>()?.get(),
                 None => DEFAULT_MAX_CONN,
             })
