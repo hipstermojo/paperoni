@@ -39,6 +39,16 @@ fn main() {
 fn run(app_config: AppConfig) {
     let mut errors = Vec::new();
     let mut partial_downloads = Vec::new();
+
+    if let Some(dir_name) = &app_config.output_directory {
+        let noun = if app_config.urls.len() > 1 {
+            "articles"
+        } else {
+            "article"
+        };
+        println!("Downloading {} to {}", noun, dir_name);
+    }
+
     let bar = if app_config.can_disable_progress_bar {
         ProgressBar::hidden()
     } else {
@@ -50,6 +60,7 @@ fn run(app_config: AppConfig) {
         enabled_bar.enable_steady_tick(500);
         enabled_bar
     };
+
     let articles = download(&app_config, &bar, &mut partial_downloads, &mut errors);
     bar.finish_with_message("Downloaded articles");
 
