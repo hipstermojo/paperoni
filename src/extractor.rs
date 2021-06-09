@@ -37,6 +37,7 @@ impl Extractor {
             let template = r#"
             <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
                 <head>
+                    <link rel="stylesheet" href="stylesheet.css" type="text/css"></link>
                 </head>
                 <body>
                 </body>

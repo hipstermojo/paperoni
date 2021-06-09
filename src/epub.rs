@@ -3,9 +3,10 @@ use std::fs::File;
 
 use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
 use epub_builder::{EpubBuilder, EpubContent, TocElement, ZipLibrary};
+use html5ever::tendril::fmt::Slice;
 use indicatif::{ProgressBar, ProgressStyle};
 use kuchiki::NodeRef;
-use log::{debug, info};
+use log::{debug, error, info};
 
 use crate::{
     cli::AppConfig,
@@ -27,14 +28,16 @@ pub fn generate_epubs(
     } else {
         let enabled_bar = ProgressBar::new(articles.len() as u64);
         let style = ProgressStyle::default_bar().template(
-        "{spinner:.cyan} [{elapsed_precise}] {bar:40.white} {:>8} epub {pos}/{len:7} {msg:.green}",
-    );
+            "{spinner:.cyan} [{elapsed_precise}] {bar:40.white} {:>8} epub {pos}/{len:7} {msg:.green}",
+        );
         enabled_bar.set_style(style);
         if !articles.is_empty() {
             enabled_bar.set_message("Generating epubs");
         }
         enabled_bar
     };
+
+    let stylesheet = include_bytes!("./assets/writ.min.css");
 
     let mut errors: Vec<PaperoniError> = Vec::new();
 
@@ -64,6 +67,16 @@ pub fn generate_epubs(
             };
             debug!("Creating {:?}", name);
             epub.inline_toc();
+            match epub.stylesheet(stylesheet.as_bytes()) {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("Unable to add stylesheets to epub file");
+                    let mut paperoni_err: PaperoniError = e.into();
+                    paperoni_err.set_article_source(name);
+                    errors.push(paperoni_err);
+                    return Err(errors);
+                }
+            }
             articles
                 .iter()
                 .enumerate()
@@ -168,6 +181,9 @@ pub fn generate_epubs(
                     if let Some(author) = article.metadata().byline() {
                         epub.metadata("author", replace_escaped_characters(author))?;
                     }
+
+                    epub.stylesheet(stylesheet.as_bytes())?;
+
                     let title = replace_escaped_characters(article.metadata().title());
                     epub.metadata("title", &title)?;
 
@@ -248,6 +264,7 @@ fn generate_appendix(articles: Vec<&Extractor>) -> String {
     let template = format!(
         r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
     <head>
+        <link rel="stylesheet" href="stylesheet.css" type="text/css"></link>
     </head>
     <body>
         <h2>Appendix</h2><h3>Article sources</h3>
