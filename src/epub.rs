@@ -18,6 +18,10 @@ pub fn generate_epubs(
     app_config: &AppConfig,
     successful_articles_table: &mut Table,
 ) -> Result<(), Vec<PaperoniError>> {
+    if articles.is_empty() {
+        return Ok(());
+    }
+
     let bar = if app_config.can_disable_progress_bar {
         ProgressBar::hidden()
     } else {

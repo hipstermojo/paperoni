@@ -103,7 +103,7 @@ pub fn serialize_to_xhtml<W: std::io::Write>(
                     let attrs_str = attrs
                         .map
                         .iter()
-                        .filter(|(k, _)| &k.local != "\"")
+                        .filter(|(k, _)| !k.local.contains("\""))
                         .map(|(k, v)| {
                             format!(
                                 "{}=\"{}\"",

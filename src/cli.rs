@@ -155,7 +155,13 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                 arg_matches.is_present("verbosity") && !arg_matches.is_present("log-to-file"),
             )
             .log_level(match arg_matches.occurrences_of("verbosity") {
-                0 => LogLevel::Off,
+                0 => {
+                    if !arg_matches.is_present("log-to-file") {
+                        LogLevel::Off
+                    } else {
+                        LogLevel::Debug
+                    }
+                }
                 1 => LogLevel::Error,
                 2 => LogLevel::Warn,
                 3 => LogLevel::Info,
