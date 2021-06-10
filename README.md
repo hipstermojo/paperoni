@@ -118,10 +118,6 @@ into a single epub using the `merge` flag and specifying the output file.
 paperoni -f links.txt --merge out.epub
 ```
 
-### Recommended fonts
-
-The styling on the EPUB files comes from the [writ.css](https://github.com/causal-agent/writ) library. This uses Palatino as the serif font which you can get online for free. However, you can use whichever serif fonts you have installed.
-
 ### Logging events
 
 Logging is disabled by default. This can be activated by either using the `-v` flag or `--log-to-file` flag. If the `--log-to-file` flag is passed the logs are sent to a file in the default Paperoni directory `.paperoni/logs` which is on your home directory. The `-v` flag configures the verbosity levels such that:

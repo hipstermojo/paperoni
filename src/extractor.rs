@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use itertools::Itertools;
 use kuchiki::{traits::*, NodeRef};
 
 use crate::errors::PaperoniError;
@@ -54,15 +55,19 @@ impl Extractor {
     /// Traverses the DOM tree of the content and retrieves the IMG URLs
     pub fn extract_img_urls(&mut self) {
         if let Some(content_ref) = &self.article {
-            for img_ref in content_ref.select("img").unwrap() {
-                img_ref.as_node().as_element().map(|img_elem| {
-                    img_elem.attributes.borrow().get("src").map(|img_url| {
-                        if !(img_url.is_empty() || img_url.starts_with("data:image")) {
-                            self.img_urls.push((img_url.to_string(), None))
-                        }
-                    })
-                });
-            }
+            self.img_urls = content_ref
+                .select("img")
+                .unwrap()
+                .filter_map(|img_ref| {
+                    let attrs = img_ref.attributes.borrow();
+                    attrs
+                        .get("src")
+                        .filter(|val| !(val.is_empty() || val.starts_with("data:image")))
+                        .map(ToString::to_string)
+                })
+                .unique()
+                .map(|val| (val, None))
+                .collect();
         }
     }
 

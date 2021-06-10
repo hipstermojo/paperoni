@@ -1,8 +1,9 @@
-use std::{collections::BTreeSet, fs, num::NonZeroUsize, path::Path};
+use std::{fs, num::NonZeroUsize, path::Path};
 
 use chrono::{DateTime, Local};
 use clap::{App, AppSettings, Arg, ArgMatches};
 use flexi_logger::LevelFilter as LogLevel;
+use itertools::Itertools;
 
 type Error = crate::errors::CliError<AppConfigBuilderError>;
 
@@ -126,24 +127,24 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                 };
                 let direct_urls = arg_matches
                     .values_of("urls")
-                    .and_then(|urls| urls.map(url_filter).collect::<Option<BTreeSet<_>>>());
+                    .and_then(|urls| urls.map(url_filter).collect::<Option<Vec<_>>>())
+                    .unwrap_or(Vec::new());
                 let file_urls = arg_matches
                     .value_of("file")
                     .map(fs::read_to_string)
                     .transpose()?
-                    .and_then(|content| {
-                        content
-                            .lines()
-                            .map(url_filter)
-                            .collect::<Option<BTreeSet<_>>>()
-                    });
-                match (direct_urls, file_urls) {
-                    (Some(direct_urls), Some(file_urls)) => Ok(direct_urls
-                        .union(&file_urls)
-                        .map(ToOwned::to_owned)
-                        .collect::<Vec<_>>()),
-                    (Some(urls), None) | (None, Some(urls)) => Ok(urls.into_iter().collect()),
-                    (None, None) => Err(Error::NoUrls),
+                    .and_then(|content| content.lines().map(url_filter).collect::<Option<Vec<_>>>())
+                    .unwrap_or(Vec::new());
+
+                let urls = [direct_urls, file_urls]
+                    .concat()
+                    .into_iter()
+                    .unique()
+                    .collect_vec();
+                if !urls.is_empty() {
+                    Ok(urls)
+                } else {
+                    Err(Error::NoUrls)
                 }
             }?)
             .max_conn(match arg_matches.value_of("max-conn") {

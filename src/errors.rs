@@ -152,7 +152,7 @@ pub enum CliError<BuilderError: Debug + Display> {
     InvalidOutputPath(String),
     #[error("Wrong output directory")]
     WrongOutputDirectory,
-    #[error("Output directory not exists")]
+    #[error("Output directory does not exist")]
     OutputDirectoryNotExists,
     #[error("Unable to start logger!\n{0}")]
     LogError(#[from] LogError),
