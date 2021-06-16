@@ -8,11 +8,11 @@ use indicatif::{ProgressBar, ProgressStyle};
 use kuchiki::NodeRef;
 use log::{debug, error, info};
 
-use crate::{
-    cli::AppConfig,
-    errors::PaperoniError,
-    extractor::{self, Extractor},
-};
+use crate::{cli::AppConfig, errors::PaperoniError, extractor::Extractor};
+
+lazy_static! {
+    static ref ESC_SEQ_REGEX: regex::Regex = regex::Regex::new(r#"(&|<|>|'|")"#).unwrap();
+}
 
 pub fn generate_epubs(
     articles: Vec<Extractor>,
@@ -82,15 +82,16 @@ pub fn generate_epubs(
                 .enumerate()
                 .fold(&mut epub, |epub, (idx, article)| {
                     let mut article_result = || -> Result<(), PaperoniError> {
-                        let mut xhtml_buf = Vec::new();
-                        extractor::serialize_to_xhtml(article.article(), &mut xhtml_buf)?;
-                        let xhtml_str = std::str::from_utf8(&xhtml_buf)?;
-                        let section_name = article.metadata().title();
                         let content_url = format!("article_{}.xhtml", idx);
-                        let mut content = EpubContent::new(&content_url, xhtml_str.as_bytes())
-                            .title(replace_escaped_characters(section_name));
+                        let mut xhtml_buf = Vec::new();
                         let header_level_tocs =
                             get_header_level_toc_vec(&content_url, article.article());
+
+                        serialize_to_xhtml(article.article(), &mut xhtml_buf)?;
+                        let xhtml_str = std::str::from_utf8(&xhtml_buf)?;
+                        let section_name = article.metadata().title();
+                        let mut content = EpubContent::new(&content_url, xhtml_str.as_bytes())
+                            .title(replace_escaped_characters(section_name));
 
                         for toc_element in header_level_tocs {
                             content = content.child(toc_element);
@@ -172,11 +173,11 @@ pub fn generate_epubs(
                     debug!("Creating {:?}", file_name);
                     let mut out_file = File::create(&file_name).unwrap();
                     let mut xhtml_buf = Vec::new();
-                    extractor::serialize_to_xhtml(article.article(), &mut xhtml_buf)
-                        .expect("Unable to serialize to xhtml");
-                    let xhtml_str = std::str::from_utf8(&xhtml_buf).unwrap();
                     let header_level_tocs =
                         get_header_level_toc_vec("index.xhtml", article.article());
+                    serialize_to_xhtml(article.article(), &mut xhtml_buf)
+                        .expect("Unable to serialize to xhtml");
+                    let xhtml_str = std::str::from_utf8(&xhtml_buf).unwrap();
 
                     if let Some(author) = article.metadata().byline() {
                         epub.metadata("author", replace_escaped_characters(author))?;
@@ -398,6 +399,60 @@ fn get_header_level_toc_vec(content_url: &str, article: &NodeRef) -> Vec<TocElem
 
     headers_vec
 }
+
+/// Serializes a NodeRef to a string that is XHTML compatible
+/// The only DOM nodes serialized are Text and Element nodes
+fn serialize_to_xhtml<W: std::io::Write>(
+    node_ref: &NodeRef,
+    mut w: &mut W,
+) -> Result<(), PaperoniError> {
+    let mut escape_map = HashMap::new();
+    escape_map.insert("<", "&lt;");
+    escape_map.insert(">", "&gt;");
+    escape_map.insert("&", "&amp;");
+    escape_map.insert("\"", "&quot;");
+    escape_map.insert("'", "&apos;");
+    for edge in node_ref.traverse_inclusive() {
+        match edge {
+            kuchiki::iter::NodeEdge::Start(n) => match n.data() {
+                kuchiki::NodeData::Text(rc_text) => {
+                    let text = rc_text.borrow();
+                    let esc_text = ESC_SEQ_REGEX
+                        .replace_all(&text, |captures: &regex::Captures| escape_map[&captures[1]]);
+                    write!(&mut w, "{}", esc_text)?;
+                }
+                kuchiki::NodeData::Element(elem_data) => {
+                    let attrs = elem_data.attributes.borrow();
+                    let attrs_str = attrs
+                        .map
+                        .iter()
+                        .filter(|(k, _)| !k.local.contains("\""))
+                        .map(|(k, v)| {
+                            format!(
+                                "{}=\"{}\"",
+                                k.local,
+                                ESC_SEQ_REGEX
+                                    .replace_all(&v.value, |captures: &regex::Captures| {
+                                        escape_map[&captures[1]]
+                                    })
+                            )
+                        })
+                        .fold("".to_string(), |acc, val| acc + " " + &val);
+                    write!(&mut w, "<{}{}>", &elem_data.name.local, attrs_str)?;
+                }
+                _ => (),
+            },
+            kuchiki::iter::NodeEdge::End(n) => match n.data() {
+                kuchiki::NodeData::Element(elem_data) => {
+                    write!(&mut w, "</{}>", &elem_data.name.local)?;
+                }
+                _ => (),
+            },
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
     use kuchiki::traits::*;
