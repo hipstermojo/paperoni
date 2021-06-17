@@ -21,6 +21,7 @@ pub struct AppConfig {
     pub can_disable_progress_bar: bool,
     pub start_time: DateTime<Local>,
     pub is_logging_to_file: bool,
+    pub inline_toc: bool,
 }
 
 impl AppConfig {
@@ -86,7 +87,14 @@ impl AppConfig {
             Arg::with_name("log-to-file")
                 .long("log-to-file")
                 .help("Enables logging of events to a file located in .paperoni/logs with a default log level of debug. Use -v to specify the logging level")
-                .takes_value(false));
+                .takes_value(false))
+        .arg(
+            Arg::with_name("inline-toc")
+            .long("inline-toc")
+            .requires("output_name")
+            .help("Add an inlined Table of Contents page at the start of the merged article.")
+            .long_help("Add an inlined Table of Contents page at the start of the merged article. This does not affect the Table of Contents navigation")
+        );
 
         Self::try_from(app.get_matches())
     }
@@ -169,6 +177,7 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                 4..=u64::MAX => LogLevel::Debug,
             })
             .is_logging_to_file(arg_matches.is_present("log-to-file"))
+            .inline_toc(arg_matches.is_present("inline-toc"))
             .output_directory(
                 arg_matches
                     .value_of("output_directory")

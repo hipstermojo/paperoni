@@ -66,7 +66,11 @@ pub fn generate_epubs(
                 }
             };
             debug!("Creating {:?}", name);
-            epub.inline_toc();
+
+            if app_config.inline_toc {
+                epub.inline_toc();
+            }
+
             match epub.stylesheet(stylesheet.as_bytes()) {
                 Ok(_) => (),
                 Err(e) => {
