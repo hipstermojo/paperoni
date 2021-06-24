@@ -1,13 +1,71 @@
 use async_std::io::prelude::*;
+use async_std::task;
 use async_std::{fs::File, stream};
 use futures::StreamExt;
 use indicatif::ProgressBar;
+use log::warn;
 use log::{debug, info};
 use url::Url;
 
+use crate::cli::AppConfig;
 use crate::errors::{ErrorKind, ImgError, PaperoniError};
 use crate::extractor::Extractor;
 type HTMLResource = (String, String);
+
+pub fn download(
+    app_config: &AppConfig,
+    bar: &ProgressBar,
+    partial_downloads: &mut Vec<PartialDownload>,
+    errors: &mut Vec<PaperoniError>,
+) -> Vec<Extractor> {
+    task::block_on(async {
+        let urls_iter = app_config.urls.iter().map(|url| fetch_html(url));
+        let mut responses = stream::from_iter(urls_iter).buffered(app_config.max_conn);
+        let mut articles = Vec::new();
+        while let Some(fetch_result) = responses.next().await {
+            match fetch_result {
+                Ok((url, html)) => {
+                    debug!("Extracting {}", &url);
+                    let mut extractor = Extractor::from_html(&html, &url);
+                    bar.set_message("Extracting...");
+                    match extractor.extract_content() {
+                        Ok(_) => {
+                            extractor.extract_img_urls();
+                            if let Err(img_errors) =
+                                download_images(&mut extractor, &Url::parse(&url).unwrap(), &bar)
+                                    .await
+                            {
+                                partial_downloads
+                                    .push(PartialDownload::new(&url, extractor.metadata().title()));
+                                warn!(
+                                    "{} image{} failed to download for {}",
+                                    img_errors.len(),
+                                    if img_errors.len() > 1 { "s" } else { "" },
+                                    url
+                                );
+                                for img_error in img_errors {
+                                    warn!(
+                                        "{}\n\t\tReason {}",
+                                        img_error.url().as_ref().unwrap(),
+                                        img_error
+                                    );
+                                }
+                            }
+                            articles.push(extractor);
+                        }
+                        Err(mut e) => {
+                            e.set_article_source(&url);
+                            errors.push(e);
+                        }
+                    }
+                }
+                Err(e) => errors.push(e),
+            }
+            bar.inc(1);
+        }
+        articles
+    })
+}
 
 pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
     let client = surf::Client::new();
@@ -153,7 +211,11 @@ pub async fn download_images(
         })
         .enumerate()
         .map(|(img_idx, (url, req))| async move {
-            bar.set_message(format!("Downloading images [{}/{}]", img_idx + 1, img_count).as_str());
+            bar.set_message(format!(
+                "Downloading images [{}/{}]",
+                img_idx + 1,
+                img_count
+            ));
             match req.await {
                 Ok(mut img_response) => {
                     let process_response =
@@ -206,6 +268,20 @@ pub async fn download_images(
     }
 }
 
+pub struct PartialDownload {
+    pub link: String,
+    pub title: String,
+}
+
+impl PartialDownload {
+    pub fn new(link: &str, title: &str) -> Self {
+        Self {
+            link: link.into(),
+            title: title.into(),
+        }
+    }
+}
+
 /// Handles getting the extension from a given MIME subtype.
 fn map_mime_subtype_to_ext(subtype: &str) -> &str {
     if subtype == ("svg+xml") {
@@ -234,9 +310,9 @@ fn get_absolute_url(url: &str, request_url: &Url) -> String {
         .unwrap()
         .join(url)
         .unwrap()
-        .into_string()
+        .into()
     } else {
-        request_url.join(url).unwrap().into_string()
+        request_url.join(url).unwrap().into()
     }
 }
 

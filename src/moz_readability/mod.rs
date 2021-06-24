@@ -659,10 +659,24 @@ impl Readability {
                 .map(|node_ref| {
                     let node_attrs = node_ref.attributes.borrow();
                     let href = node_attrs.get("href").unwrap();
-                    if href.trim() == "/" {
-                        document_uri.join("/").unwrap()
-                    } else {
-                        Url::parse(href).unwrap()
+
+                    match Url::parse(href) {
+                        Ok(url) => url,
+                        Err(e) => match e {
+                            url::ParseError::RelativeUrlWithoutBase => {
+                                match document_uri.join(href) {
+                                    Ok(joined_url) => joined_url,
+                                    Err(e) => panic!(
+                                        "{:} unable to parse url {:?} on element {}",
+                                        e, href, &node_ref.name.local
+                                    ),
+                                }
+                            }
+                            e => panic!(
+                                "{:} unable to parse url {:?} on element {}",
+                                e, href, &node_ref.name.local
+                            ),
+                        },
                     }
                 })
                 .next()
@@ -1609,13 +1623,11 @@ impl Readability {
             //   // class name "comment", etc), and turn divs into P tags where they have been
             //   // used inappropriately (as in, where they contain no other block level elements.)
             let mut elements_to_score: Vec<NodeRef> = Vec::new();
-            let mut node = Some(
-                self.root_node
-                    .select_first("html")
-                    .unwrap()
-                    .as_node()
-                    .clone(),
-            );
+            let mut node = self
+                .root_node
+                .select_first("html")
+                .ok()
+                .map(|n| n.as_node().clone());
 
             while let Some(node_ref) = node {
                 let node_elem = node_ref.as_element().unwrap();

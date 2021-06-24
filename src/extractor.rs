@@ -1,15 +1,10 @@
-use std::collections::HashMap;
-
+use itertools::Itertools;
 use kuchiki::{traits::*, NodeRef};
 
 use crate::errors::PaperoniError;
 use crate::moz_readability::{MetaData, Readability};
 
 pub type ResourceInfo = (String, Option<String>);
-
-lazy_static! {
-    static ref ESC_SEQ_REGEX: regex::Regex = regex::Regex::new(r#"(&|<|>|'|")"#).unwrap();
-}
 
 pub struct Extractor {
     article: Option<NodeRef>,
@@ -37,6 +32,7 @@ impl Extractor {
             let template = r#"
             <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
                 <head>
+                    <link rel="stylesheet" href="stylesheet.css" type="text/css"></link>
                 </head>
                 <body>
                 </body>
@@ -53,15 +49,19 @@ impl Extractor {
     /// Traverses the DOM tree of the content and retrieves the IMG URLs
     pub fn extract_img_urls(&mut self) {
         if let Some(content_ref) = &self.article {
-            for img_ref in content_ref.select("img").unwrap() {
-                img_ref.as_node().as_element().map(|img_elem| {
-                    img_elem.attributes.borrow().get("src").map(|img_url| {
-                        if !(img_url.is_empty() || img_url.starts_with("data:image")) {
-                            self.img_urls.push((img_url.to_string(), None))
-                        }
-                    })
-                });
-            }
+            self.img_urls = content_ref
+                .select("img")
+                .unwrap()
+                .filter_map(|img_ref| {
+                    let attrs = img_ref.attributes.borrow();
+                    attrs
+                        .get("src")
+                        .filter(|val| !(val.is_empty() || val.starts_with("data:image")))
+                        .map(ToString::to_string)
+                })
+                .unique()
+                .map(|val| (val, None))
+                .collect();
         }
     }
 
@@ -75,59 +75,6 @@ impl Extractor {
     pub fn metadata(&self) -> &MetaData {
         &self.readability.metadata
     }
-}
-
-/// Serializes a NodeRef to a string that is XHTML compatible
-/// The only DOM nodes serialized are Text and Element nodes
-pub fn serialize_to_xhtml<W: std::io::Write>(
-    node_ref: &NodeRef,
-    mut w: &mut W,
-) -> Result<(), PaperoniError> {
-    let mut escape_map = HashMap::new();
-    escape_map.insert("<", "&lt;");
-    escape_map.insert(">", "&gt;");
-    escape_map.insert("&", "&amp;");
-    escape_map.insert("\"", "&quot;");
-    escape_map.insert("'", "&apos;");
-    for edge in node_ref.traverse_inclusive() {
-        match edge {
-            kuchiki::iter::NodeEdge::Start(n) => match n.data() {
-                kuchiki::NodeData::Text(rc_text) => {
-                    let text = rc_text.borrow();
-                    let esc_text = ESC_SEQ_REGEX
-                        .replace_all(&text, |captures: &regex::Captures| escape_map[&captures[1]]);
-                    write!(&mut w, "{}", esc_text)?;
-                }
-                kuchiki::NodeData::Element(elem_data) => {
-                    let attrs = elem_data.attributes.borrow();
-                    let attrs_str = attrs
-                        .map
-                        .iter()
-                        .filter(|(k, _)| &k.local != "\"")
-                        .map(|(k, v)| {
-                            format!(
-                                "{}=\"{}\"",
-                                k.local,
-                                ESC_SEQ_REGEX
-                                    .replace_all(&v.value, |captures: &regex::Captures| {
-                                        escape_map[&captures[1]]
-                                    })
-                            )
-                        })
-                        .fold("".to_string(), |acc, val| acc + " " + &val);
-                    write!(&mut w, "<{}{}>", &elem_data.name.local, attrs_str)?;
-                }
-                _ => (),
-            },
-            kuchiki::iter::NodeEdge::End(n) => match n.data() {
-                kuchiki::NodeData::Element(elem_data) => {
-                    write!(&mut w, "</{}>", &elem_data.name.local)?;
-                }
-                _ => (),
-            },
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

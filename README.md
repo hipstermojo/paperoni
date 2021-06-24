@@ -8,7 +8,7 @@
     </a>
 </div>
 
-Paperoni is a CLI tool made in Rust for downloading web articles as EPUBs.
+Paperoni is a CLI tool made in Rust for downloading web articles as EPUBs. There is provisional<sup><a href="#pdf-exports">\*</a></sup> support for exporting to PDF as well.
 
 > This project is in an alpha release so it might crash when you use it. Please open an [issue on Github](https://github.com/hipstermojo/paperoni/issues/new) if it does crash.
 
@@ -23,7 +23,7 @@ Check the [releases](https://github.com/hipstermojo/paperoni/releases) page for 
 Paperoni is published on [crates.io](https://crates.io). If you have [cargo](https://github.com/rust-lang/cargo) installed, then run:
 
 ```sh
-cargo install paperoni --version 0.4.1-alpha1
+cargo install paperoni --version 0.5.0-alpha1
 ```
 
 _Paperoni is still in alpha so the `version` flag has to be passed._
@@ -48,18 +48,44 @@ USAGE:
     paperoni [OPTIONS] [urls]...
 
 OPTIONS:
-    -f, --file <file>            Input file containing links
-    -h, --help                   Prints help information
-        --log-to-file            Enables logging of events to a file located in .paperoni/logs with a default log level
-                                 of debug. Use -v to specify the logging level
-        --max_conn <max_conn>    The maximum number of concurrent HTTP connections when downloading articles. Default is
-                                 8
-        --merge <output_name>    Merge multiple articles into a single epub
-    -V, --version                Prints version information
-    -v                           Enables logging of events and set the verbosity level. Use -h to read on its usage
+    -f, --file <file>
+            Input file containing links
+
+    -h, --help
+            Prints help information
+
+        --inline-toc
+            Add an inlined Table of Contents page at the start of the merged article.
+
+        --log-to-file
+            Enables logging of events to a file located in .paperoni/logs with a default log level of debug. Use -v to
+            specify the logging level
+        --max-conn <max_conn>
+            The maximum number of concurrent HTTP connections when downloading articles. Default is 8.
+            NOTE: It is advised to use as few connections as needed i.e between 1 and 50. Using more connections can end
+            up overloading your network card with too many concurrent requests.
+    -o, --output-dir <output_directory>
+            Directory for saving epub documents
+
+        --merge <output_name>
+            Merge multiple articles into a single epub that will be given the name provided
+
+    -V, --version
+            Prints version information
+
+    -v
+            This takes upto 4 levels of verbosity in the following order.
+             - Error (-v)
+             - Warn (-vv)
+             - Info (-vvv)
+             - Debug (-vvvv)
+             When this flag is passed, it disables the progress bars and logs to stderr.
+             If you would like to send the logs to a file (and enable progress bars), pass the log-to-file flag.
 
 ARGS:
-    <urls>...    Urls of web articles
+    <urls>...
+            Urls of web articles
+
 ```
 
 To download a single article pass in its URL
@@ -124,3 +150,14 @@ This program is still in alpha so a number of things won't work:
 - Code snippets on Medium articles that are lazy loaded will not appear in the EPUB.
 
 There are also web pages it won't work on in general such as Twitter and Reddit threads.
+
+## PDF exports
+
+As of version 0.5-alpha1, you can now export to PDF using a third party tool. This requires that you install [Calibre](https://calibre-ebook.com/) which comes with a ebook conversion. You can convert the epub to a pdf through the terminal with `ebook-convert`:
+
+```sh
+# Assuming the downloaded epub was called foo.epub
+ebook-convert foo.epub foo.pdf
+```
+
+Alternatively, you can use the Calibre GUI to do the file conversion.

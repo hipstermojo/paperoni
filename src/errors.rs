@@ -1,3 +1,6 @@
+use std::fmt::{Debug, Display};
+
+use flexi_logger::FlexiLoggerError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -123,4 +126,34 @@ impl From<std::str::Utf8Error> for PaperoniError {
     fn from(err: std::str::Utf8Error) -> Self {
         PaperoniError::with_kind(ErrorKind::UTF8Error(err.to_string()))
     }
+}
+
+#[derive(Debug, Error)]
+pub enum LogError {
+    #[error(transparent)]
+    FlexiError(#[from] FlexiLoggerError),
+    #[error("Unable to get user directories for logging purposes")]
+    UserDirectoriesError,
+    #[error("Can't create log directory: {0}")]
+    CreateLogDirectoryError(#[from] std::io::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum CliError<BuilderError: Debug + Display> {
+    #[error("Failed to open file with urls: {0}")]
+    UrlFileError(#[from] std::io::Error),
+    #[error("Failed to parse max connection value: {0}")]
+    InvalidMaxConnectionCount(#[from] std::num::ParseIntError),
+    #[error("No urls were provided")]
+    NoUrls,
+    #[error("Failed to build cli application: {0}")]
+    AppBuildError(BuilderError),
+    #[error("Invalid output path name for merged epubs: {0}")]
+    InvalidOutputPath(String),
+    #[error("Wrong output directory")]
+    WrongOutputDirectory,
+    #[error("Output directory does not exist")]
+    OutputDirectoryNotExists,
+    #[error("Unable to start logger!\n{0}")]
+    LogError(#[from] LogError),
 }
