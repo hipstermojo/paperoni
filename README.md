@@ -8,7 +8,7 @@
     </a>
 </div>
 
-Paperoni is a CLI tool made in Rust for downloading web articles as EPUBs.
+Paperoni is a CLI tool made in Rust for downloading web articles as EPUBs. There is provisional<sup><a href="#pdf-exports">\*</a></sup> support for exporting to PDF as well.
 
 > This project is in an alpha release so it might crash when you use it. Please open an [issue on Github](https://github.com/hipstermojo/paperoni/issues/new) if it does crash.
 
@@ -23,7 +23,7 @@ Check the [releases](https://github.com/hipstermojo/paperoni/releases) page for 
 Paperoni is published on [crates.io](https://crates.io). If you have [cargo](https://github.com/rust-lang/cargo) installed, then run:
 
 ```sh
-cargo install paperoni --version 0.4.1-alpha1
+cargo install paperoni --version 0.5.0-alpha1
 ```
 
 _Paperoni is still in alpha so the `version` flag has to be passed._
@@ -53,6 +53,9 @@ OPTIONS:
 
     -h, --help
             Prints help information
+
+        --inline-toc
+            Add an inlined Table of Contents page at the start of the merged article.
 
         --log-to-file
             Enables logging of events to a file located in .paperoni/logs with a default log level of debug. Use -v to
@@ -147,3 +150,14 @@ This program is still in alpha so a number of things won't work:
 - Code snippets on Medium articles that are lazy loaded will not appear in the EPUB.
 
 There are also web pages it won't work on in general such as Twitter and Reddit threads.
+
+## PDF exports
+
+As of version 0.5-alpha1, you can now export to PDF using a third party tool. This requires that you install [Calibre](https://calibre-ebook.com/) which comes with a ebook conversion. You can convert the epub to a pdf through the terminal with `ebook-convert`:
+
+```sh
+# Assuming the downloaded epub was called foo.epub
+ebook-convert foo.epub foo.pdf
+```
+
+Alternatively, you can use the Calibre GUI to do the file conversion.

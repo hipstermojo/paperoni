@@ -4,7 +4,7 @@ use chrono::{DateTime, Local};
 use colored::*;
 use comfy_table::presets::UTF8_HORIZONTAL_BORDERS_ONLY;
 use comfy_table::{Cell, CellAlignment, ContentArrangement, Table};
-use flexi_logger::LevelFilter;
+use flexi_logger::{FileSpec, LevelFilter};
 use log::error;
 
 use crate::errors::PaperoniError;
@@ -169,11 +169,12 @@ pub fn init_logger(
                 if !paperoni_dir.is_dir() || !log_dir.is_dir() {
                     fs::create_dir_all(&log_dir)?;
                 }
-                logger = logger
-                    .directory(log_dir)
-                    .discriminant(formatted_timestamp.to_string())
-                    .suppress_timestamp()
-                    .log_to_file();
+                logger = logger.log_to_file(
+                    FileSpec::default()
+                        .directory(log_dir)
+                        .discriminant(formatted_timestamp.to_string())
+                        .suppress_timestamp(),
+                );
             }
             logger.start()?;
             Ok(())

@@ -159,7 +159,13 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                 Some(max_conn) => max_conn.parse::<NonZeroUsize>()?.get(),
                 None => DEFAULT_MAX_CONN,
             })
-            .merged(arg_matches.value_of("output_name").map(ToOwned::to_owned))
+            .merged(arg_matches.value_of("output_name").map(|name| {
+                if name.ends_with(".epub") {
+                    name.to_owned()
+                } else {
+                    name.to_string() + ".epub"
+                }
+            }))
             .can_disable_progress_bar(
                 arg_matches.is_present("verbosity") && !arg_matches.is_present("log-to-file"),
             )
