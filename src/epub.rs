@@ -12,6 +12,7 @@ use crate::{cli::AppConfig, errors::PaperoniError, extractor::Extractor};
 
 lazy_static! {
     static ref ESC_SEQ_REGEX: regex::Regex = regex::Regex::new(r#"(&|<|>|'|")"#).unwrap();
+    static ref VALID_ATTR_CHARS_REGEX: regex::Regex = regex::Regex::new(r#"[a-z0-9\-_]"#).unwrap();
 }
 
 pub fn generate_epubs(
@@ -292,6 +293,10 @@ fn generate_header_ids(root_node: &NodeRef) {
     let headers_no_id = headers.filter(|node_data_ref| {
         let attrs = node_data_ref.attributes.borrow();
         !attrs.contains("id")
+            || attrs
+                .get("id")
+                .map(|val| !VALID_ATTR_CHARS_REGEX.is_match(&val))
+                .unwrap()
     });
     for header in headers_no_id {
         let mut attrs = header.attributes.borrow_mut();
@@ -430,7 +435,10 @@ fn serialize_to_xhtml<W: std::io::Write>(
                     let attrs_str = attrs
                         .map
                         .iter()
-                        .filter(|(k, _)| !k.local.contains("\""))
+                        .filter(|(k, _)| {
+                            let attr_key: &str = &k.local;
+                            attr_key.is_ascii() && VALID_ATTR_CHARS_REGEX.is_match(attr_key)
+                        })
                         .map(|(k, v)| {
                             format!(
                                 "{}=\"{}\"",
