@@ -1,0 +1,66 @@
+name: paperoni
+about: Paperoni is a CLI tool made in Rust for downloading web articles as EPUBs
+settings:
+  - ArgRequiredElseHelp
+  - UnifiedHelpMessage
+args:
+  - urls:
+      help: Urls of web articles
+      multiple: true
+  - file:
+      short: f
+      long: file
+      help: Input file containing links
+      takes_value: true
+  - output_directory:
+      short: o
+      long: output-dir
+      help: Directory to store output epub documents
+      conflicts_with: output-name
+      takes_value: true
+  - output-name:
+      long: merge
+      help: Merge multiple articles into a single epub
+      long_help: Merge multiple articles into a single epub that will be given the name provided
+      conflicts_with: output_directory
+      takes_value: true
+  - max-conn:
+      long: max-conn
+      help: The maximum number of concurrent HTTP connections when downloading articles. Default is 8
+      long_help: "The maximum number of concurrent HTTP connections when downloading articles. Default is 8.\nNOTE: It is advised to use as few connections as needed i.e between 1 and 50. Using more connections can end up overloading your network card with too many concurrent requests."
+      takes_value: true
+  - verbosity:
+      short: v
+      multiple: true
+      help: Enables logging of events and set the verbosity level. Use --help to read on its usage
+      long_help: "This takes upto 4 levels of verbosity in the following order.
+        \n- Error (-v)
+        \n- Warn (-vv)
+        \n- Info (-vvv)
+        \n- Debug (-vvvv)
+        \nWhen this flag is passed, it disables the progress bars and logs to stderr.
+        \nIf you would like to send the logs to a file (and enable progress bars), pass the log-to-file flag."
+      takes_value: false
+  - log-to-file:
+      long: log-to-file
+      help: Enables logging of events to a file located in .paperoni/logs with a default log level of debug. Use -v to specify the logging level
+      takes_value: false
+  - inline-toc:
+      long: inline-toc
+      requires: output-name
+      help: Add an inlined Table of Contents page at the start of the merged article.
+      long_help: Add an inlined Table of Contents page at the start of the merged article. This does not affect the Table of Contents navigation"
+  - no-css:
+      long: no-css
+      conflicts_with: no-header-css
+      help: Removes the stylesheets used in the EPUB generation. Pass --help to learn more
+      long_help: "Removes the stylesheets used in the EPUB generation.
+        \nThe EPUB file will then be laid out based on your e-reader's default stylesheets.
+        \nImages and code blocks may overflow when this flag is set and layout of generated
+        \nPDFs will be affected. Use --no-header-css if you want to only disable the styling on headers."
+      takes_value: false
+  - no-header-css:
+      long: no-header-css
+      conflicts_with: no-css
+      help: Removes the header CSS styling but preserves styling of images and codeblocks. To remove all the default CSS, use --no-css instead.
+      takes_value: false

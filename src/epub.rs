@@ -38,7 +38,8 @@ pub fn generate_epubs(
         enabled_bar
     };
 
-    let stylesheet = include_bytes!("./assets/writ.min.css");
+    let body_stylesheet = include_bytes!("./assets/body.min.css");
+    let header_stylesheet = include_bytes!("./assets/headers.min.css");
 
     let mut errors: Vec<PaperoniError> = Vec::new();
 
@@ -72,7 +73,7 @@ pub fn generate_epubs(
                 epub.inline_toc();
             }
 
-            match epub.stylesheet(stylesheet.as_bytes()) {
+            match add_stylesheets(&mut epub, body_stylesheet, header_stylesheet, app_config) {
                 Ok(_) => (),
                 Err(e) => {
                     error!("Unable to add stylesheets to epub file");
@@ -188,8 +189,7 @@ pub fn generate_epubs(
                         epub.metadata("author", replace_escaped_characters(author))?;
                     }
 
-                    epub.stylesheet(stylesheet.as_bytes())?;
-
+                    add_stylesheets(&mut epub, body_stylesheet, header_stylesheet, app_config)?;
                     let title = replace_escaped_characters(article.metadata().title());
                     epub.metadata("title", &title)?;
 
@@ -248,6 +248,25 @@ fn replace_escaped_characters(value: &str) -> String {
         .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
+}
+
+fn add_stylesheets<T: epub_builder::Zip>(
+    epub: &mut EpubBuilder<T>,
+    body_stylesheet: &[u8],
+    header_stylesheet: &[u8],
+    app_config: &AppConfig,
+) -> Result<(), epub_builder::Error> {
+    match app_config.css_config {
+        crate::cli::CSSConfig::All => {
+            epub.stylesheet([header_stylesheet, body_stylesheet].concat().as_bytes())?;
+            Ok(())
+        }
+        crate::cli::CSSConfig::NoHeaders => {
+            epub.stylesheet(body_stylesheet.as_bytes())?;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
 }
 
 //TODO: The type signature of the argument should change as it requires that merged articles create an entirely new Vec of references
