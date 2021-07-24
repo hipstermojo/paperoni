@@ -30,7 +30,8 @@ impl Extractor {
         self.readability.parse(&self.url)?;
         if let Some(article_node_ref) = &self.readability.article_node {
             let template = r#"
-            <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+            <!DOCTYPE html>
+            <html>
                 <head>
                     <link rel="stylesheet" href="stylesheet.css" type="text/css"></link>
                 </head>

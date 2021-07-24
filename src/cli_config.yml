@@ -64,3 +64,19 @@ args:
       conflicts_with: no-css
       help: Removes the header CSS styling but preserves styling of images and codeblocks. To remove all the default CSS, use --no-css instead.
       takes_value: false
+  - export:
+      long: export
+      help: Specify the file type of the export. The type must be in lower case.
+      possible_values: [html, epub]
+      value_name: type
+      takes_value: true
+      default_value: epub
+  - inline-images:
+      long: inline-images
+      help: Inlines the article images when exporting to HTML using base64. Pass --help to learn more.
+      long_help: "Inlines the article images when exporting to HTML using base64.
+      \nThis is used when you do not want a separate folder created for images during HTML export.
+      \nNOTE: It uses base64 encoding on the images which results in larger HTML export sizes as each image
+      increases in size by about 25%-33%."
+      takes_value: false
+      requires: export

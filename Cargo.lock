@@ -1555,6 +1555,7 @@ name = "paperoni"
 version = "0.5.0-alpha1"
 dependencies = [
  "async-std",
+ "base64",
  "chrono",
  "clap",
  "colored",

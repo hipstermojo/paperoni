@@ -1,4 +1,7 @@
 /target
 *.epub
+# Only ignore top level html files which may be made when testing
+/*.html
+*.pdf
 *.log
 .vscode/

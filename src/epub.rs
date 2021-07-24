@@ -12,7 +12,7 @@ use crate::{cli::AppConfig, errors::PaperoniError, extractor::Extractor};
 
 lazy_static! {
     static ref ESC_SEQ_REGEX: regex::Regex = regex::Regex::new(r#"(&|<|>|'|")"#).unwrap();
-    static ref VALID_ATTR_CHARS_REGEX: regex::Regex = regex::Regex::new(r#"[a-z0-9\-_]"#).unwrap();
+    static ref VALID_ATTR_CHARS_REGEX: regex::Regex = regex::Regex::new(r#"[a-z0-9\-_:]"#).unwrap();
 }
 
 pub fn generate_epubs(
@@ -37,9 +37,6 @@ pub fn generate_epubs(
         }
         enabled_bar
     };
-
-    let body_stylesheet = include_bytes!("./assets/body.min.css");
-    let header_stylesheet = include_bytes!("./assets/headers.min.css");
 
     let mut errors: Vec<PaperoniError> = Vec::new();
 
@@ -73,7 +70,7 @@ pub fn generate_epubs(
                 epub.inline_toc();
             }
 
-            match add_stylesheets(&mut epub, body_stylesheet, header_stylesheet, app_config) {
+            match add_stylesheets(&mut epub, app_config) {
                 Ok(_) => (),
                 Err(e) => {
                     error!("Unable to add stylesheets to epub file");
@@ -148,6 +145,8 @@ pub fn generate_epubs(
                     let mut paperoni_err: PaperoniError = err.into();
                     paperoni_err.set_article_source(&name);
                     errors.push(paperoni_err);
+                    error!("Failed to generate epub: {}", name);
+                    bar.finish_with_message("epub generation failed\n");
                     return Err(errors);
                 }
             }
@@ -189,7 +188,7 @@ pub fn generate_epubs(
                         epub.metadata("author", replace_escaped_characters(author))?;
                     }
 
-                    add_stylesheets(&mut epub, body_stylesheet, header_stylesheet, app_config)?;
+                    add_stylesheets(&mut epub, app_config)?;
                     let title = replace_escaped_characters(article.metadata().title());
                     epub.metadata("title", &title)?;
 
@@ -206,7 +205,7 @@ pub fn generate_epubs(
                         let mut file_path = std::env::temp_dir();
                         file_path.push(&img.0);
 
-                        let img_buf = File::open(&file_path).expect("Can't read file");
+                        let img_buf = File::open(&file_path).expect("Can't read image file");
                         epub.add_resource(
                             file_path.file_name().unwrap(),
                             img_buf,
@@ -252,10 +251,10 @@ fn replace_escaped_characters(value: &str) -> String {
 
 fn add_stylesheets<T: epub_builder::Zip>(
     epub: &mut EpubBuilder<T>,
-    body_stylesheet: &[u8],
-    header_stylesheet: &[u8],
     app_config: &AppConfig,
 ) -> Result<(), epub_builder::Error> {
+    let body_stylesheet: &[u8] = include_bytes!("./assets/body.min.css");
+    let header_stylesheet: &[u8] = include_bytes!("./assets/headers.min.css");
     match app_config.css_config {
         crate::cli::CSSConfig::All => {
             epub.stylesheet([header_stylesheet, body_stylesheet].concat().as_bytes())?;
@@ -434,6 +433,15 @@ fn serialize_to_xhtml<W: std::io::Write>(
     node_ref: &NodeRef,
     mut w: &mut W,
 ) -> Result<(), PaperoniError> {
+    {
+        // Add XHTML attributes
+        let html_elem = node_ref
+            .select_first("html")
+            .expect("Unable to get <html> element in article");
+        let mut html_attrs = html_elem.attributes.borrow_mut();
+        html_attrs.insert("xmlns", "http://www.w3.org/1999/xhtml".into());
+        html_attrs.insert("xmlns:epub", "http://www.idpf.org/2007/ops".into());
+    }
     let mut escape_map = HashMap::new();
     escape_map.insert("<", "&lt;");
     escape_map.insert(">", "&gt;");

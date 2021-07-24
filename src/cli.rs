@@ -11,10 +11,10 @@ const DEFAULT_MAX_CONN: usize = 8;
 
 #[derive(derive_builder::Builder)]
 pub struct AppConfig {
-    /// Urls for store in epub
+    /// Article urls
     pub urls: Vec<String>,
     pub max_conn: usize,
-    /// Path to file of multiple articles into a single epub
+    /// Path to file of multiple articles into a single article
     pub merged: Option<String>,
     pub output_directory: Option<String>,
     pub log_level: LogLevel,
@@ -23,6 +23,8 @@ pub struct AppConfig {
     pub is_logging_to_file: bool,
     pub inline_toc: bool,
     pub css_config: CSSConfig,
+    pub export_type: ExportType,
+    pub is_inlining_images: bool,
 }
 
 impl AppConfig {
@@ -93,10 +95,11 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                 None => DEFAULT_MAX_CONN,
             })
             .merged(arg_matches.value_of("output-name").map(|name| {
-                if name.ends_with(".epub") {
+                let file_ext = format!(".{}", arg_matches.value_of("export").unwrap());
+                if name.ends_with(&file_ext) {
                     name.to_owned()
                 } else {
-                    name.to_string() + ".epub"
+                    name.to_string() + &file_ext
                 }
             }))
             .can_disable_progress_bar(
@@ -143,6 +146,15 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                     _ => CSSConfig::All,
                 },
             )
+            .export_type({
+                let export_type = arg_matches.value_of("export").unwrap();
+                if export_type == "html" {
+                    ExportType::HTML
+                } else {
+                    ExportType::EPUB
+                }
+            })
+            .is_inlining_images(arg_matches.is_present("inline-images"))
             .try_init()
     }
 }
@@ -161,4 +173,10 @@ pub enum CSSConfig {
     All,
     NoHeaders,
     None,
+}
+
+#[derive(Clone, Debug)]
+pub enum ExportType {
+    HTML,
+    EPUB,
 }
