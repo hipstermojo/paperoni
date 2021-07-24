@@ -14,7 +14,7 @@ use log::{debug, error, info};
 use crate::{
     cli::{self, AppConfig},
     errors::PaperoniError,
-    extractor::Extractor,
+    extractor::Article,
     moz_readability::MetaData,
 };
 
@@ -29,7 +29,7 @@ const BASE_HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
 </html>"#;
 
 pub fn generate_html_exports(
-    articles: Vec<Extractor>,
+    articles: Vec<Article>,
     app_config: &AppConfig,
     successful_articles_table: &mut Table,
 ) -> Result<(), Vec<PaperoniError>> {
@@ -80,7 +80,7 @@ pub fn generate_html_exports(
 
             for (idx, article) in articles.iter().enumerate() {
                 let article_elem = article
-                    .article()
+                    .node_ref()
                     .select_first("div[id=\"readability-page-1\"]")
                     .unwrap();
 
@@ -226,16 +226,16 @@ pub fn generate_html_exports(
                         elem_attrs.insert("charset", "UTF-8".into());
                     }
 
-                    if let Ok(head_elem) = article.article().select_first("head") {
+                    if let Ok(head_elem) = article.node_ref().select_first("head") {
                         let head_elem_node = head_elem.as_node();
                         head_elem_node.append(utf8_encoding);
                     };
 
-                    insert_title_elem(article.article(), article.metadata().title());
-                    insert_appendix(article.article(), vec![(article.metadata(), &article.url)]);
-                    inline_css(article.article(), app_config);
+                    insert_title_elem(article.node_ref(), article.metadata().title());
+                    insert_appendix(article.node_ref(), vec![(article.metadata(), &article.url)]);
+                    inline_css(article.node_ref(), app_config);
 
-                    article.article().serialize(&mut out_file)?;
+                    article.node_ref().serialize(&mut out_file)?;
                     Ok(())
                 };
 
@@ -269,7 +269,7 @@ fn create_qualname(name: &str) -> QualName {
 
 /// Updates the src attribute of `<img>` elements with a base64 encoded string of the image data
 fn update_imgs_base64(
-    article: &Extractor,
+    article: &Article,
     img_url: &str,
     mime_type: &str,
 ) -> Result<(), std::io::Error> {
@@ -279,7 +279,7 @@ fn update_imgs_base64(
     let img_base64_str = format!("data:image:{};base64,{}", mime_type, encode(img_bytes));
 
     let img_elems = article
-        .article()
+        .node_ref()
         .select(&format!("img[src=\"{}\"]", img_url))
         .unwrap();
     for img_elem in img_elems {
@@ -292,14 +292,14 @@ fn update_imgs_base64(
 }
 
 /// Updates the src attribute of `<img>` elements to the new `imgs_dir_path` and copies the image to the new file location
-fn update_img_urls(article: &Extractor, imgs_dir_path: &Path) -> Result<(), std::io::Error> {
+fn update_img_urls(article: &Article, imgs_dir_path: &Path) -> Result<(), std::io::Error> {
     let temp_dir = std::env::temp_dir();
     for (img_url, _) in &article.img_urls {
         let (from, to) = (temp_dir.join(img_url), imgs_dir_path.join(img_url));
         info!("Copying {:?} to {:?}", from, to);
         fs::copy(from, to)?;
         let img_elems = article
-            .article()
+            .node_ref()
             .select(&format!("img[src=\"{}\"]", img_url))
             .unwrap();
         for img_elem in img_elems {

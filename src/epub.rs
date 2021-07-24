@@ -8,7 +8,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use kuchiki::NodeRef;
 use log::{debug, error, info};
 
-use crate::{cli::AppConfig, errors::PaperoniError, extractor::Extractor};
+use crate::{cli::AppConfig, errors::PaperoniError, extractor::Article};
 
 lazy_static! {
     static ref ESC_SEQ_REGEX: regex::Regex = regex::Regex::new(r#"(&|<|>|'|")"#).unwrap();
@@ -16,7 +16,7 @@ lazy_static! {
 }
 
 pub fn generate_epubs(
-    articles: Vec<Extractor>,
+    articles: Vec<Article>,
     app_config: &AppConfig,
     successful_articles_table: &mut Table,
 ) -> Result<(), Vec<PaperoniError>> {
@@ -88,9 +88,9 @@ pub fn generate_epubs(
                         let content_url = format!("article_{}.xhtml", idx);
                         let mut xhtml_buf = Vec::new();
                         let header_level_tocs =
-                            get_header_level_toc_vec(&content_url, article.article());
+                            get_header_level_toc_vec(&content_url, article.node_ref());
 
-                        serialize_to_xhtml(article.article(), &mut xhtml_buf)?;
+                        serialize_to_xhtml(article.node_ref(), &mut xhtml_buf)?;
                         let xhtml_str = std::str::from_utf8(&xhtml_buf)?;
                         let section_name = article.metadata().title();
                         let mut content = EpubContent::new(&content_url, xhtml_str.as_bytes())
@@ -179,8 +179,8 @@ pub fn generate_epubs(
                     let mut out_file = File::create(&file_name).unwrap();
                     let mut xhtml_buf = Vec::new();
                     let header_level_tocs =
-                        get_header_level_toc_vec("index.xhtml", article.article());
-                    serialize_to_xhtml(article.article(), &mut xhtml_buf)
+                        get_header_level_toc_vec("index.xhtml", article.node_ref());
+                    serialize_to_xhtml(article.node_ref(), &mut xhtml_buf)
                         .expect("Unable to serialize to xhtml");
                     let xhtml_str = std::str::from_utf8(&xhtml_buf).unwrap();
 
@@ -269,7 +269,7 @@ fn add_stylesheets<T: epub_builder::Zip>(
 }
 
 //TODO: The type signature of the argument should change as it requires that merged articles create an entirely new Vec of references
-fn generate_appendix(articles: Vec<&Extractor>) -> String {
+fn generate_appendix(articles: Vec<&Article>) -> String {
     let link_tags: String = articles
         .iter()
         .map(|article| {
