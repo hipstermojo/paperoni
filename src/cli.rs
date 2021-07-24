@@ -119,7 +119,17 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                 4..=u64::MAX => LogLevel::Debug,
             })
             .is_logging_to_file(arg_matches.is_present("log-to-file"))
-            .inline_toc(arg_matches.is_present("inline-toc"))
+            .inline_toc(
+                (if arg_matches.is_present("inline-toc") {
+                    if arg_matches.value_of("export") == Some("epub") {
+                        Ok(true)
+                    } else {
+                        Err(Error::WrongExportInliningToC)
+                    }
+                } else {
+                    Ok(false)
+                })?,
+            )
             .output_directory(
                 arg_matches
                     .value_of("output_directory")

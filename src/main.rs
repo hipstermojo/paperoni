@@ -3,6 +3,7 @@ extern crate lazy_static;
 
 use std::process::exit;
 
+use colored::Colorize;
 use comfy_table::presets::{UTF8_FULL, UTF8_HORIZONTAL_BORDERS_ONLY};
 use comfy_table::{ContentArrangement, Table};
 use http::download;
@@ -28,7 +29,7 @@ fn main() {
     let app_config = match cli::AppConfig::init_with_cli() {
         Ok(app_config) => app_config,
         Err(err) => {
-            eprintln!("{}", err);
+            eprintln!("{}: {}", "ERROR".bold().bright_red(), err);
             exit(1);
         }
     };
