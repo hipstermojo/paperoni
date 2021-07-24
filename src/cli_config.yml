@@ -49,7 +49,7 @@ args:
       long: inline-toc
       requires: output-name
       help: Add an inlined Table of Contents page at the start of the merged article.
-      long_help: Add an inlined Table of Contents page at the start of the merged article. This does not affect the Table of Contents navigation"
+      long_help: Add an inlined Table of Contents page at the start of the merged article. This does not affect the Table of Contents navigation
   - no-css:
       long: no-css
       conflicts_with: no-header-css
