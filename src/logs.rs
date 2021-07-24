@@ -11,7 +11,7 @@ use crate::errors::PaperoniError;
 
 pub fn display_summary(
     initial_article_count: usize,
-    succesful_articles_table: Table,
+    successful_articles_table: Table,
     partial_downloads: Vec<PartialDownload>,
     errors: Vec<PaperoniError>,
 ) {
@@ -31,7 +31,7 @@ pub fn display_summary(
     );
 
     if successfully_downloaded_count > 0 {
-        println!("{}", succesful_articles_table);
+        println!("{}", successful_articles_table);
     }
 
     if partial_downloads_count > 0 {

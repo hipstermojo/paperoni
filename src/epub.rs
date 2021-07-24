@@ -8,14 +8,15 @@ use indicatif::{ProgressBar, ProgressStyle};
 use kuchiki::NodeRef;
 use log::{debug, error, info};
 
-use crate::{cli::AppConfig, errors::PaperoniError, extractor::Extractor};
+use crate::{cli::AppConfig, errors::PaperoniError, extractor::Article};
 
 lazy_static! {
     static ref ESC_SEQ_REGEX: regex::Regex = regex::Regex::new(r#"(&|<|>|'|")"#).unwrap();
+    static ref VALID_ATTR_CHARS_REGEX: regex::Regex = regex::Regex::new(r#"[a-z0-9\-_:]"#).unwrap();
 }
 
 pub fn generate_epubs(
-    articles: Vec<Extractor>,
+    articles: Vec<Article>,
     app_config: &AppConfig,
     successful_articles_table: &mut Table,
 ) -> Result<(), Vec<PaperoniError>> {
@@ -36,8 +37,6 @@ pub fn generate_epubs(
         }
         enabled_bar
     };
-
-    let stylesheet = include_bytes!("./assets/writ.min.css");
 
     let mut errors: Vec<PaperoniError> = Vec::new();
 
@@ -71,7 +70,7 @@ pub fn generate_epubs(
                 epub.inline_toc();
             }
 
-            match epub.stylesheet(stylesheet.as_bytes()) {
+            match add_stylesheets(&mut epub, app_config) {
                 Ok(_) => (),
                 Err(e) => {
                     error!("Unable to add stylesheets to epub file");
@@ -89,9 +88,9 @@ pub fn generate_epubs(
                         let content_url = format!("article_{}.xhtml", idx);
                         let mut xhtml_buf = Vec::new();
                         let header_level_tocs =
-                            get_header_level_toc_vec(&content_url, article.article());
+                            get_header_level_toc_vec(&content_url, article.node_ref());
 
-                        serialize_to_xhtml(article.article(), &mut xhtml_buf)?;
+                        serialize_to_xhtml(article.node_ref(), &mut xhtml_buf)?;
                         let xhtml_str = std::str::from_utf8(&xhtml_buf)?;
                         let section_name = article.metadata().title();
                         let mut content = EpubContent::new(&content_url, xhtml_str.as_bytes())
@@ -146,6 +145,8 @@ pub fn generate_epubs(
                     let mut paperoni_err: PaperoniError = err.into();
                     paperoni_err.set_article_source(&name);
                     errors.push(paperoni_err);
+                    error!("Failed to generate epub: {}", name);
+                    bar.finish_with_message("epub generation failed\n");
                     return Err(errors);
                 }
             }
@@ -178,8 +179,8 @@ pub fn generate_epubs(
                     let mut out_file = File::create(&file_name).unwrap();
                     let mut xhtml_buf = Vec::new();
                     let header_level_tocs =
-                        get_header_level_toc_vec("index.xhtml", article.article());
-                    serialize_to_xhtml(article.article(), &mut xhtml_buf)
+                        get_header_level_toc_vec("index.xhtml", article.node_ref());
+                    serialize_to_xhtml(article.node_ref(), &mut xhtml_buf)
                         .expect("Unable to serialize to xhtml");
                     let xhtml_str = std::str::from_utf8(&xhtml_buf).unwrap();
 
@@ -187,8 +188,7 @@ pub fn generate_epubs(
                         epub.metadata("author", replace_escaped_characters(author))?;
                     }
 
-                    epub.stylesheet(stylesheet.as_bytes())?;
-
+                    add_stylesheets(&mut epub, app_config)?;
                     let title = replace_escaped_characters(article.metadata().title());
                     epub.metadata("title", &title)?;
 
@@ -205,7 +205,7 @@ pub fn generate_epubs(
                         let mut file_path = std::env::temp_dir();
                         file_path.push(&img.0);
 
-                        let img_buf = File::open(&file_path).expect("Can't read file");
+                        let img_buf = File::open(&file_path).expect("Can't read image file");
                         epub.add_resource(
                             file_path.file_name().unwrap(),
                             img_buf,
@@ -249,8 +249,27 @@ fn replace_escaped_characters(value: &str) -> String {
         .replace(">", "&gt;")
 }
 
+fn add_stylesheets<T: epub_builder::Zip>(
+    epub: &mut EpubBuilder<T>,
+    app_config: &AppConfig,
+) -> Result<(), epub_builder::Error> {
+    let body_stylesheet: &[u8] = include_bytes!("./assets/body.min.css");
+    let header_stylesheet: &[u8] = include_bytes!("./assets/headers.min.css");
+    match app_config.css_config {
+        crate::cli::CSSConfig::All => {
+            epub.stylesheet([header_stylesheet, body_stylesheet].concat().as_bytes())?;
+            Ok(())
+        }
+        crate::cli::CSSConfig::NoHeaders => {
+            epub.stylesheet(body_stylesheet.as_bytes())?;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 //TODO: The type signature of the argument should change as it requires that merged articles create an entirely new Vec of references
-fn generate_appendix(articles: Vec<&Extractor>) -> String {
+fn generate_appendix(articles: Vec<&Article>) -> String {
     let link_tags: String = articles
         .iter()
         .map(|article| {
@@ -292,6 +311,10 @@ fn generate_header_ids(root_node: &NodeRef) {
     let headers_no_id = headers.filter(|node_data_ref| {
         let attrs = node_data_ref.attributes.borrow();
         !attrs.contains("id")
+            || attrs
+                .get("id")
+                .map(|val| !VALID_ATTR_CHARS_REGEX.is_match(&val))
+                .unwrap()
     });
     for header in headers_no_id {
         let mut attrs = header.attributes.borrow_mut();
@@ -410,6 +433,15 @@ fn serialize_to_xhtml<W: std::io::Write>(
     node_ref: &NodeRef,
     mut w: &mut W,
 ) -> Result<(), PaperoniError> {
+    {
+        // Add XHTML attributes
+        let html_elem = node_ref
+            .select_first("html")
+            .expect("Unable to get <html> element in article");
+        let mut html_attrs = html_elem.attributes.borrow_mut();
+        html_attrs.insert("xmlns", "http://www.w3.org/1999/xhtml".into());
+        html_attrs.insert("xmlns:epub", "http://www.idpf.org/2007/ops".into());
+    }
     let mut escape_map = HashMap::new();
     escape_map.insert("<", "&lt;");
     escape_map.insert(">", "&gt;");
@@ -430,7 +462,10 @@ fn serialize_to_xhtml<W: std::io::Write>(
                     let attrs_str = attrs
                         .map
                         .iter()
-                        .filter(|(k, _)| !k.local.contains("\""))
+                        .filter(|(k, _)| {
+                            let attr_key: &str = &k.local;
+                            attr_key.is_ascii() && VALID_ATTR_CHARS_REGEX.is_match(attr_key)
+                        })
                         .map(|(k, v)| {
                             format!(
                                 "{}=\"{}\"",

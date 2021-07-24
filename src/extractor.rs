@@ -6,18 +6,18 @@ use crate::moz_readability::{MetaData, Readability};
 
 pub type ResourceInfo = (String, Option<String>);
 
-pub struct Extractor {
-    article: Option<NodeRef>,
+pub struct Article {
+    node_ref_opt: Option<NodeRef>,
     pub img_urls: Vec<ResourceInfo>,
     readability: Readability,
     pub url: String,
 }
 
-impl Extractor {
+impl Article {
     /// Create a new instance of an HTML extractor given an HTML string
     pub fn from_html(html_str: &str, url: &str) -> Self {
-        Extractor {
-            article: None,
+        Self {
+            node_ref_opt: None,
             img_urls: Vec::new(),
             readability: Readability::new(html_str),
             url: url.to_string(),
@@ -30,7 +30,8 @@ impl Extractor {
         self.readability.parse(&self.url)?;
         if let Some(article_node_ref) = &self.readability.article_node {
             let template = r#"
-            <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+            <!DOCTYPE html>
+            <html>
                 <head>
                     <link rel="stylesheet" href="stylesheet.css" type="text/css"></link>
                 </head>
@@ -41,14 +42,14 @@ impl Extractor {
             let doc = kuchiki::parse_html().one(template);
             let body = doc.select_first("body").unwrap();
             body.as_node().append(article_node_ref.clone());
-            self.article = Some(doc);
+            self.node_ref_opt = Some(doc);
         }
         Ok(())
     }
 
     /// Traverses the DOM tree of the content and retrieves the IMG URLs
     pub fn extract_img_urls(&mut self) {
-        if let Some(content_ref) = &self.article {
+        if let Some(content_ref) = &self.node_ref_opt {
             self.img_urls = content_ref
                 .select("img")
                 .unwrap()
@@ -66,8 +67,8 @@ impl Extractor {
     }
 
     /// Returns the extracted article [NodeRef]. It should only be called *AFTER* calling parse
-    pub fn article(&self) -> &NodeRef {
-        self.article.as_ref().expect(
+    pub fn node_ref(&self) -> &NodeRef {
+        self.node_ref_opt.as_ref().expect(
             "Article node doesn't exist. This may be because the document has not been parsed",
         )
     }
@@ -111,16 +112,16 @@ mod test {
 
     #[test]
     fn test_extract_img_urls() {
-        let mut extractor = Extractor::from_html(TEST_HTML, "http://example.com/");
-        extractor
+        let mut article = Article::from_html(TEST_HTML, "http://example.com/");
+        article
             .extract_content()
             .expect("Article extraction failed unexpectedly");
-        extractor.extract_img_urls();
+        article.extract_img_urls();
 
-        assert!(extractor.img_urls.len() > 0);
+        assert!(article.img_urls.len() > 0);
         assert_eq!(
             vec![("http://example.com/img.jpg".to_string(), None)],
-            extractor.img_urls
+            article.img_urls
         );
     }
 }

@@ -1,7 +1,7 @@
 use std::{fs, num::NonZeroUsize, path::Path};
 
 use chrono::{DateTime, Local};
-use clap::{App, AppSettings, Arg, ArgMatches};
+use clap::{load_yaml, App, ArgMatches};
 use flexi_logger::LevelFilter as LogLevel;
 use itertools::Itertools;
 
@@ -11,10 +11,10 @@ const DEFAULT_MAX_CONN: usize = 8;
 
 #[derive(derive_builder::Builder)]
 pub struct AppConfig {
-    /// Urls for store in epub
+    /// Article urls
     pub urls: Vec<String>,
     pub max_conn: usize,
-    /// Path to file of multiple articles into a single epub
+    /// Path to file of multiple articles into a single article
     pub merged: Option<String>,
     pub output_directory: Option<String>,
     pub log_level: LogLevel,
@@ -22,80 +22,15 @@ pub struct AppConfig {
     pub start_time: DateTime<Local>,
     pub is_logging_to_file: bool,
     pub inline_toc: bool,
+    pub css_config: CSSConfig,
+    pub export_type: ExportType,
+    pub is_inlining_images: bool,
 }
 
 impl AppConfig {
     pub fn init_with_cli() -> Result<AppConfig, Error> {
-        let app = App::new("paperoni")
-        .settings(&[
-            AppSettings::ArgRequiredElseHelp,
-            AppSettings::UnifiedHelpMessage,
-        ])
-        .version(clap::crate_version!())
-        .about(
-            "Paperoni is a CLI tool made in Rust for downloading web articles as EPUBs",
-        )
-        .arg(
-            Arg::with_name("urls")
-                .help("Urls of web articles")
-                .multiple(true),
-        )
-        .arg(
-            Arg::with_name("file")
-                .short("f")
-                .long("file")
-                .help("Input file containing links")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("output_directory")
-                .long("output-dir")
-                .short("o")
-                .help("Directory to store output epub documents")
-                .conflicts_with("output_name")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("output_name")
-                .long("merge")
-                .help("Merge multiple articles into a single epub")
-                .long_help("Merge multiple articles into a single epub that will be given the name provided")
-                .conflicts_with("output_directory")
-                .takes_value(true),
-        ).arg(
-            Arg::with_name("max-conn")
-                .long("max_conn")
-                .help("The maximum number of concurrent HTTP connections when downloading articles. Default is 8")
-                .long_help("The maximum number of concurrent HTTP connections when downloading articles. Default is 8.\nNOTE: It is advised to use as few connections as needed i.e between 1 and 50. Using more connections can end up overloading your network card with too many concurrent requests.")
-                .takes_value(true))
-        .arg(
-            Arg::with_name("verbosity")
-                .short("v")
-                .multiple(true)
-                .help("Enables logging of events and set the verbosity level. Use --help to read on its usage")
-                .long_help(
-"This takes upto 4 levels of verbosity in the following order.
- - Error (-v)
- - Warn (-vv)
- - Info (-vvv)
- - Debug (-vvvv)
- When this flag is passed, it disables the progress bars and logs to stderr.
- If you would like to send the logs to a file (and enable progress bars), pass the log-to-file flag."
-                )
-                .takes_value(false))
-        .arg(
-            Arg::with_name("log-to-file")
-                .long("log-to-file")
-                .help("Enables logging of events to a file located in .paperoni/logs with a default log level of debug. Use -v to specify the logging level")
-                .takes_value(false))
-        .arg(
-            Arg::with_name("inline-toc")
-            .long("inline-toc")
-            .requires("output_name")
-            .help("Add an inlined Table of Contents page at the start of the merged article.")
-            .long_help("Add an inlined Table of Contents page at the start of the merged article. This does not affect the Table of Contents navigation")
-        );
-
+        let yaml_config = load_yaml!("cli_config.yml");
+        let app = App::from_yaml(yaml_config).version(clap::crate_version!());
         Self::try_from(app.get_matches())
     }
 
@@ -159,11 +94,12 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                 Some(max_conn) => max_conn.parse::<NonZeroUsize>()?.get(),
                 None => DEFAULT_MAX_CONN,
             })
-            .merged(arg_matches.value_of("output_name").map(|name| {
-                if name.ends_with(".epub") {
+            .merged(arg_matches.value_of("output-name").map(|name| {
+                let file_ext = format!(".{}", arg_matches.value_of("export").unwrap());
+                if name.ends_with(&file_ext) {
                     name.to_owned()
                 } else {
-                    name.to_string() + ".epub"
+                    name.to_string() + &file_ext
                 }
             }))
             .can_disable_progress_bar(
@@ -183,7 +119,17 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                 4..=u64::MAX => LogLevel::Debug,
             })
             .is_logging_to_file(arg_matches.is_present("log-to-file"))
-            .inline_toc(arg_matches.is_present("inline-toc"))
+            .inline_toc(
+                (if arg_matches.is_present("inline-toc") {
+                    if arg_matches.value_of("export") == Some("epub") {
+                        Ok(true)
+                    } else {
+                        Err(Error::WrongExportInliningToC)
+                    }
+                } else {
+                    Ok(false)
+                })?,
+            )
             .output_directory(
                 arg_matches
                     .value_of("output_directory")
@@ -200,6 +146,25 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                     .transpose()?,
             )
             .start_time(Local::now())
+            .css_config(
+                match (
+                    arg_matches.is_present("no-css"),
+                    arg_matches.is_present("no-header-css"),
+                ) {
+                    (true, _) => CSSConfig::None,
+                    (_, true) => CSSConfig::NoHeaders,
+                    _ => CSSConfig::All,
+                },
+            )
+            .export_type({
+                let export_type = arg_matches.value_of("export").unwrap();
+                if export_type == "html" {
+                    ExportType::HTML
+                } else {
+                    ExportType::EPUB
+                }
+            })
+            .is_inlining_images(arg_matches.is_present("inline-images"))
             .try_init()
     }
 }
@@ -211,4 +176,17 @@ impl AppConfigBuilder {
             .init_logger()?
             .init_merge_file()
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum CSSConfig {
+    All,
+    NoHeaders,
+    None,
+}
+
+#[derive(Clone, Debug)]
+pub enum ExportType {
+    HTML,
+    EPUB,
 }

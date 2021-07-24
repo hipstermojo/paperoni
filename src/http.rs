@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::cli::AppConfig;
 use crate::errors::{ErrorKind, ImgError, PaperoniError};
-use crate::extractor::Extractor;
+use crate::extractor::Article;
 type HTMLResource = (String, String);
 
 pub fn download(
@@ -17,7 +17,7 @@ pub fn download(
     bar: &ProgressBar,
     partial_downloads: &mut Vec<PartialDownload>,
     errors: &mut Vec<PaperoniError>,
-) -> Vec<Extractor> {
+) -> Vec<Article> {
     task::block_on(async {
         let urls_iter = app_config.urls.iter().map(|url| fetch_html(url));
         let mut responses = stream::from_iter(urls_iter).buffered(app_config.max_conn);
@@ -26,7 +26,7 @@ pub fn download(
             match fetch_result {
                 Ok((url, html)) => {
                     debug!("Extracting {}", &url);
-                    let mut extractor = Extractor::from_html(&html, &url);
+                    let mut extractor = Article::from_html(&html, &url);
                     bar.set_message("Extracting...");
                     match extractor.extract_content() {
                         Ok(_) => {
@@ -185,7 +185,7 @@ async fn process_img_response<'a>(
 }
 
 pub async fn download_images(
-    extractor: &mut Extractor,
+    extractor: &mut Article,
     article_origin: &Url,
     bar: &ProgressBar,
 ) -> Result<(), Vec<ImgError>> {
@@ -237,7 +237,7 @@ pub async fn download_images(
     let replace_existing_img_src = |img_item: ImgItem| -> (String, Option<String>) {
         let (img_url, img_path, img_mime) = img_item;
         let img_ref = extractor
-            .article()
+            .node_ref()
             .select_first(&format!("img[src='{}']", img_url))
             .expect("Image node does not exist");
         let mut img_node = img_ref.attributes.borrow_mut();

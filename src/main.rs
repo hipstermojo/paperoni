@@ -3,6 +3,7 @@ extern crate lazy_static;
 
 use std::process::exit;
 
+use colored::Colorize;
 use comfy_table::presets::{UTF8_FULL, UTF8_HORIZONTAL_BORDERS_ONLY};
 use comfy_table::{ContentArrangement, Table};
 use http::download;
@@ -12,6 +13,7 @@ mod cli;
 mod epub;
 mod errors;
 mod extractor;
+mod html;
 /// This module is responsible for async HTTP calls for downloading
 /// the HTML content and images
 mod http;
@@ -20,13 +22,14 @@ mod moz_readability;
 
 use cli::AppConfig;
 use epub::generate_epubs;
+use html::generate_html_exports;
 use logs::display_summary;
 
 fn main() {
     let app_config = match cli::AppConfig::init_with_cli() {
         Ok(app_config) => app_config,
         Err(err) => {
-            eprintln!("{}", err);
+            eprintln!("{}: {}", "ERROR".bold().bright_red(), err);
             exit(1);
         }
     };
@@ -64,22 +67,33 @@ fn run(app_config: AppConfig) {
     let articles = download(&app_config, &bar, &mut partial_downloads, &mut errors);
     bar.finish_with_message("Downloaded articles");
 
-    let mut succesful_articles_table = Table::new();
-    succesful_articles_table
+    let mut successful_articles_table = Table::new();
+    successful_articles_table
         .load_preset(UTF8_FULL)
         .load_preset(UTF8_HORIZONTAL_BORDERS_ONLY)
         .set_content_arrangement(ContentArrangement::Dynamic);
-    match generate_epubs(articles, &app_config, &mut succesful_articles_table) {
-        Ok(_) => (),
-        Err(gen_epub_errors) => {
-            errors.extend(gen_epub_errors);
+
+    match app_config.export_type {
+        cli::ExportType::EPUB => {
+            match generate_epubs(articles, &app_config, &mut successful_articles_table) {
+                Ok(_) => (),
+                Err(gen_epub_errors) => {
+                    errors.extend(gen_epub_errors);
+                }
+            };
         }
-    };
+        cli::ExportType::HTML => {
+            match generate_html_exports(articles, &app_config, &mut successful_articles_table) {
+                Ok(_) => (),
+                Err(gen_html_errors) => errors.extend(gen_html_errors),
+            }
+        }
+    }
 
     let has_errors = !errors.is_empty() || !partial_downloads.is_empty();
     display_summary(
         app_config.urls.len(),
-        succesful_articles_table,
+        successful_articles_table,
         partial_downloads,
         errors,
     );
