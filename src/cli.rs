@@ -164,7 +164,17 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                     ExportType::EPUB
                 }
             })
-            .is_inlining_images(arg_matches.is_present("inline-images"))
+            .is_inlining_images(
+                (if arg_matches.is_present("inline-images") {
+                    if arg_matches.value_of("export") == Some("html") {
+                        Ok(true)
+                    } else {
+                        Err(Error::WrongExportInliningImages)
+                    }
+                } else {
+                    Ok(false)
+                })?,
+            )
             .try_init()
     }
 }

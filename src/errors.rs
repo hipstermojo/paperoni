@@ -156,6 +156,8 @@ pub enum CliError<BuilderError: Debug + Display> {
     OutputDirectoryNotExists,
     #[error("Unable to start logger!\n{0}")]
     LogError(#[from] LogError),
-    #[error("The --inline-toc can only be used exporting to epub")]
+    #[error("The --inline-toc flag can only be used when exporting to epub")]
     WrongExportInliningToC,
+    #[error("The --inline-images flag can only be used when exporting to html")]
+    WrongExportInliningImages,
 }
