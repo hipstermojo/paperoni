@@ -12,7 +12,7 @@ use kuchiki::{traits::*, NodeRef};
 use log::{debug, error, info};
 
 use crate::{
-    cli::{self, AppConfig},
+    cli::{self, AppConfig, CSSConfig},
     errors::PaperoniError,
     extractor::Article,
     moz_readability::MetaData,
@@ -137,7 +137,8 @@ pub fn generate_html_exports(
                     .map(|article| (article.metadata(), article.url.as_str()))
                     .collect(),
             );
-            inline_css(&base_html_elem, app_config);
+            inline_css(&base_html_elem, &app_config.css_config);
+            remove_existing_stylesheet_link(&base_html_elem);
 
             info!("Added title, footer and inlined styles for {}", name);
 
@@ -233,7 +234,8 @@ pub fn generate_html_exports(
 
                     insert_title_elem(article.node_ref(), article.metadata().title());
                     insert_appendix(article.node_ref(), vec![(article.metadata(), &article.url)]);
-                    inline_css(article.node_ref(), app_config);
+                    inline_css(article.node_ref(), &app_config.css_config);
+                    remove_existing_stylesheet_link(article.node_ref());
 
                     article.node_ref().serialize(&mut out_file)?;
                     Ok(())
@@ -356,11 +358,11 @@ fn insert_appendix(root_node: &NodeRef, article_links: Vec<(&MetaData, &str)>) {
 }
 
 /// Inlines the CSS stylesheets into the HTML article node
-fn inline_css(root_node: &NodeRef, app_config: &AppConfig) {
+fn inline_css(root_node: &NodeRef, css_config: &CSSConfig) {
     let body_stylesheet = include_str!("./assets/body.min.css");
     let header_stylesheet = include_str!("./assets/headers.min.css");
     let mut css_str = String::new();
-    match app_config.css_config {
+    match css_config {
         cli::CSSConfig::NoHeaders => {
             css_str.push_str(body_stylesheet);
         }
@@ -380,8 +382,114 @@ fn inline_css(root_node: &NodeRef, app_config: &AppConfig) {
     head_elem.as_node().prepend(style_elem.as_node().to_owned());
 }
 
-    // Remove the <link> of the stylesheet since styles are now inlined
+/// Removes the <link> of the stylesheet. This is used when inlining styles
+fn remove_existing_stylesheet_link(root_node: &NodeRef) {
     if let Ok(style_link_elem) = root_node.select_first("link[href=\"stylesheet.css\"]") {
         style_link_elem.as_node().detach();
     };
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn test_insert_title_elem() {
+        let title = "Sample title";
+        let html_str = r#"<html><head><meta charset="UTF-8"/></head><body></body></html>"#;
+        let doc = kuchiki::parse_html().one(html_str);
+        assert_eq!(0, doc.select("title").unwrap().count());
+
+        insert_title_elem(&doc, title);
+        assert_eq!(1, doc.select("title").unwrap().count());
+        assert_eq!(title, doc.select_first("title").unwrap().text_contents());
+    }
+
+    #[test]
+    fn test_create_qualname() {
+        let name = "div";
+        assert_eq!(
+            create_qualname(name),
+            QualName::new(
+                None,
+                Namespace::from("http://www.w3.org/1999/xhtml"),
+                LocalName::from(name)
+            )
+        );
+    }
+
+    #[test]
+    fn test_inline_css() {
+        let html_str = r#"<html>
+        <head><meta charset="UTF-8"/></head>
+        <body>
+            <p>Lorem ipsum sample text goes here.</p>
+        </body>
+        </html>"#;
+        let doc = kuchiki::parse_html().one(html_str);
+        let body_stylesheet = include_str!("./assets/body.min.css");
+        let header_stylesheet = include_str!("./assets/headers.min.css");
+        assert_eq!(0, doc.select("style").unwrap().count());
+
+        inline_css(&doc, &CSSConfig::None);
+        assert_eq!(0, doc.select("style").unwrap().count());
+
+        inline_css(&doc, &CSSConfig::NoHeaders);
+        assert_eq!(1, doc.select("style").unwrap().count());
+        let style_elem = doc.select_first("style").unwrap();
+        assert_eq!(body_stylesheet, style_elem.text_contents());
+
+        let doc = kuchiki::parse_html().one(html_str);
+        inline_css(&doc, &CSSConfig::All);
+        assert_eq!(1, doc.select("style").unwrap().count());
+        let style_elem = doc.select_first("style").unwrap();
+        assert_eq!(
+            format!("{}{}", body_stylesheet, header_stylesheet),
+            style_elem.text_contents()
+        );
+    }
+
+    #[test]
+    fn test_remove_existing_stylesheet_link() {
+        let html_str = r#"<html>
+        <head><link href="stylesheet.css"></link></head>
+        <body><p>Lorem ipsum sample text goes here.</p></body></html>"#;
+        let doc = kuchiki::parse_html().one(html_str);
+        assert_eq!(1, doc.select("link").unwrap().count());
+        remove_existing_stylesheet_link(&doc);
+        assert_eq!(0, doc.select("link").unwrap().count());
+    }
+
+    #[test]
+    fn test_insert_appendix() {
+        let html_str = r#"<html>
+        <head><meta charset="UTF-8"/></head>
+        <body>
+            <p>Lorem ipsum sample text goes here.</p>
+        </body>
+        </html>"#;
+        let doc = kuchiki::parse_html().one(html_str);
+        let meta_data = MetaData::new();
+
+        assert_eq!(0, doc.select("footer").unwrap().count());
+
+        insert_appendix(&doc, vec![(&meta_data, "http://example.org")]);
+
+        assert_eq!(1, doc.select("footer").unwrap().count());
+        assert_eq!(1, doc.select("footer > h2").unwrap().count());
+        assert_eq!(
+            "Appendix",
+            doc.select_first("footer > h2").unwrap().text_contents()
+        );
+        assert_eq!(1, doc.select("footer > h3").unwrap().count());
+        assert_eq!(
+            "Article sources",
+            doc.select_first("footer > h3").unwrap().text_contents()
+        );
+        assert_eq!(1, doc.select("a").unwrap().count());
+
+        let anchor_elem = doc.select_first("a").unwrap();
+        assert_eq!("http://example.org", anchor_elem.text_contents());
+        let anchor_attrs = anchor_elem.attributes.borrow();
+        assert_eq!(Some("http://example.org"), anchor_attrs.get("href"));
+    }
 }
