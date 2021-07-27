@@ -344,10 +344,15 @@ fn insert_appendix(root_node: &NodeRef, article_links: Vec<(&MetaData, &str)>) {
             format!("<a href=\"{}\">{}</a><br></br>", url, article_name)
         })
         .collect();
-    let footer_inner_html = format!("<h2>Appendix</h2><h2>Article sources</h3>{}", link_tags);
-    let footer_elem =
-        kuchiki::parse_fragment(create_qualname("footer"), Vec::new()).one(footer_inner_html);
-    root_node.append(footer_elem);
+    let footer_inner_html = format!(
+        "<footer><h2>Appendix</h2><h3>Article sources</h3>{}</footer>",
+        link_tags
+    );
+    let footer_container =
+        kuchiki::parse_fragment(create_qualname("div"), Vec::new()).one(footer_inner_html);
+    let footer_elem = footer_container.select_first("footer").unwrap();
+
+    root_node.append(footer_elem.as_node().clone());
 }
 
 /// Inlines the CSS stylesheets into the HTML article node
@@ -371,18 +376,9 @@ fn inline_css(root_node: &NodeRef, app_config: &AppConfig) {
     let style_container =
         kuchiki::parse_fragment(create_qualname("div"), Vec::new()).one(css_html_str);
     let style_elem = style_container.select_first("style").unwrap();
-    match root_node.select_first("head") {
-        Ok(head_elem) => {
-            head_elem.as_node().prepend(style_elem.as_node().to_owned());
-        }
-        Err(_) => {
-            debug!("{}", HEAD_ELEM_NOT_FOUND);
-            let html_elem = root_node.select_first("html").unwrap();
-            let head_elem = NodeRef::new_element(create_qualname("head"), BTreeMap::new());
-            head_elem.prepend(style_elem.as_node().to_owned());
-            html_elem.as_node().prepend(head_elem);
-        }
-    }
+    let head_elem = root_node.select_first("head").expect(HEAD_ELEM_NOT_FOUND);
+    head_elem.as_node().prepend(style_elem.as_node().to_owned());
+}
 
     // Remove the <link> of the stylesheet since styles are now inlined
     if let Ok(style_link_elem) = root_node.select_first("link[href=\"stylesheet.css\"]") {
