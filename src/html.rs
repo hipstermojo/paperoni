@@ -91,38 +91,33 @@ pub fn generate_html_exports(
                     *id_attr = format!("readability-page-{}", idx);
                 }
 
-                for (img_url, mime_type_opt) in &article.img_urls {
-                    if app_config.is_inlining_images {
-                        info!("Inlining images for {}", title);
-                        let result = update_imgs_base64(
-                            article,
-                            img_url,
-                            mime_type_opt.as_deref().unwrap_or("image/*"),
-                        );
+                if app_config.is_inlining_images {
+                    info!("Inlining images for {}", title);
+                    let result = update_imgs_base64(article);
 
-                        if let Err(e) = result {
-                            let mut err: PaperoniError = e.into();
-                            err.set_article_source(title);
-                            error!("Unable to copy images to imgs dir for {}", title);
-                            errors.push(err);
-                        }
+                    if let Err(e) = result {
+                        let mut err: PaperoniError = e.into();
+                        err.set_article_source(title);
+                        error!("Unable to copy images to imgs dir for {}", title);
+                        errors.push(err);
+                    }
 
-                        info!("Completed inlining images for {}", title);
+                    info!("Completed inlining images for {}", title);
+                } else {
+                    info!("Copying images to imgs dir for {}", title);
+                    let result = update_img_urls(article, &imgs_dir_path).map_err(|e| {
+                        let mut err: PaperoniError = e.into();
+                        err.set_article_source(title);
+                        err
+                    });
+                    if let Err(e) = result {
+                        error!("Unable to copy images to imgs dir for {}", title);
+                        errors.push(e);
                     } else {
-                        info!("Copying images to imgs dir for {}", title);
-                        let result = update_img_urls(article, &imgs_dir_path).map_err(|e| {
-                            let mut err: PaperoniError = e.into();
-                            err.set_article_source(title);
-                            err
-                        });
-                        if let Err(e) = result {
-                            error!("Unable to copy images to imgs dir for {}", title);
-                            errors.push(e);
-                        } else {
-                            info!("Successfully copied images to imgs dir for {}", title);
-                        }
+                        info!("Successfully copied images to imgs dir for {}", title);
                     }
                 }
+
                 bar.inc(1);
                 successful_articles_table.add_row(vec![title]);
                 body_elem.as_node().append(article_elem.as_node().clone());
@@ -200,13 +195,7 @@ pub fn generate_html_exports(
                     let mut out_file = File::create(&file_name)?;
 
                     if app_config.is_inlining_images {
-                        for (img_url, mime_type_opt) in &article.img_urls {
-                            update_imgs_base64(
-                                article,
-                                img_url,
-                                mime_type_opt.as_deref().unwrap_or("image/*"),
-                            )?
-                        }
+                        update_imgs_base64(article)?;
                     } else {
                         let base_path =
                             Path::new(app_config.output_directory.as_deref().unwrap_or("."));
@@ -270,24 +259,26 @@ fn create_qualname(name: &str) -> QualName {
 }
 
 /// Updates the src attribute of `<img>` elements with a base64 encoded string of the image data
-fn update_imgs_base64(
-    article: &Article,
-    img_url: &str,
-    mime_type: &str,
-) -> Result<(), std::io::Error> {
+fn update_imgs_base64(article: &Article) -> Result<(), std::io::Error> {
     let temp_dir = std::env::temp_dir();
-    let img_path = temp_dir.join(img_url);
-    let img_bytes = std::fs::read(img_path)?;
-    let img_base64_str = format!("data:image:{};base64,{}", mime_type, encode(img_bytes));
+    for (img_url, mime_type) in &article.img_urls {
+        let img_path = temp_dir.join(img_url);
+        let img_bytes = std::fs::read(img_path)?;
+        let img_base64_str = format!(
+            "data:image:{};base64,{}",
+            mime_type.as_deref().unwrap_or("image/*"),
+            encode(img_bytes)
+        );
 
-    let img_elems = article
-        .node_ref()
-        .select(&format!("img[src=\"{}\"]", img_url))
-        .unwrap();
-    for img_elem in img_elems {
-        let mut img_attr = img_elem.attributes.borrow_mut();
-        if let Some(src_attr) = img_attr.get_mut("src") {
-            *src_attr = img_base64_str.clone();
+        let img_elems = article
+            .node_ref()
+            .select(&format!("img[src=\"{}\"]", img_url))
+            .unwrap();
+        for img_elem in img_elems {
+            let mut img_attr = img_elem.attributes.borrow_mut();
+            if let Some(src_attr) = img_attr.get_mut("src") {
+                *src_attr = img_base64_str.clone();
+            }
         }
     }
     Ok(())
