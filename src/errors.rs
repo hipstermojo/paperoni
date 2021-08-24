@@ -138,6 +138,14 @@ pub enum LogError {
     CreateLogDirectoryError(#[from] std::io::Error),
 }
 
+// dumb hack to allow for comparing errors in testing.
+// derive macros cannot be used because underlying errors like io::Error do not derive PartialEq
+impl PartialEq for LogError {
+    fn eq(&self, other: &Self) -> bool {
+        format!("{:?}", self) == format!("{:?}", other)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum CliError<BuilderError: Debug + Display> {
     #[error("Failed to open file with urls: {0}")]
@@ -160,4 +168,12 @@ pub enum CliError<BuilderError: Debug + Display> {
     WrongExportInliningToC,
     #[error("The --inline-images flag can only be used when exporting to html")]
     WrongExportInliningImages,
+}
+
+// dumb hack to allow for comparing errors in testing.
+// derive macros cannot be used because underlying errors like io::Error do not derive PartialEq
+impl<T: Debug + Display> PartialEq for CliError<T> {
+    fn eq(&self, other: &Self) -> bool {
+        format!("{:?}", self) == format!("{:?}", other)
+    }
 }

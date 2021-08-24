@@ -9,13 +9,14 @@ type Error = crate::errors::CliError<AppConfigBuilderError>;
 
 const DEFAULT_MAX_CONN: usize = 8;
 
-#[derive(derive_builder::Builder)]
+#[derive(derive_builder::Builder, Debug)]
 pub struct AppConfig {
     /// Article urls
     pub urls: Vec<String>,
     pub max_conn: usize,
     /// Path to file of multiple articles into a single article
     pub merged: Option<String>,
+    // TODO: Change type to Path
     pub output_directory: Option<String>,
     pub log_level: LogLevel,
     pub can_disable_progress_bar: bool,
@@ -95,7 +96,7 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                 None => DEFAULT_MAX_CONN,
             })
             .merged(arg_matches.value_of("output-name").map(|name| {
-                let file_ext = format!(".{}", arg_matches.value_of("export").unwrap());
+                let file_ext = format!(".{}", arg_matches.value_of("export").unwrap_or("epub"));
                 if name.ends_with(&file_ext) {
                     name.to_owned()
                 } else {
@@ -132,10 +133,11 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
             )
             .output_directory(
                 arg_matches
-                    .value_of("output_directory")
+                    .value_of("output-directory")
                     .map(|output_directory| {
                         let path = Path::new(output_directory);
                         if !path.exists() {
+                            // TODO: Create the directory
                             Err(Error::OutputDirectoryNotExists)
                         } else if !path.is_dir() {
                             Err(Error::WrongOutputDirectory)
@@ -157,7 +159,7 @@ impl<'a> TryFrom<ArgMatches<'a>> for AppConfig {
                 },
             )
             .export_type({
-                let export_type = arg_matches.value_of("export").unwrap();
+                let export_type = arg_matches.value_of("export").unwrap_or("epub");
                 if export_type == "html" {
                     ExportType::HTML
                 } else {
@@ -199,4 +201,135 @@ pub enum CSSConfig {
 pub enum ExportType {
     HTML,
     EPUB,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_clap_config_errors() {
+        let yaml_config = load_yaml!("cli_config.yml");
+        let app = App::from_yaml(yaml_config);
+
+        // It returns Ok when only a url is passed
+        let result = app
+            .clone()
+            .get_matches_from_safe(vec!["paperoni", "http://example.org"]);
+        assert!(result.is_ok());
+
+        // It returns an error when no args are passed
+        let result = app.clone().get_matches_from_safe(vec!["paperoni"]);
+        assert!(result.is_err());
+        assert_eq!(
+            clap::ErrorKind::MissingArgumentOrSubcommand,
+            result.unwrap_err().kind
+        );
+
+        // It returns an error when both output-dir and merge are used
+        let result = app.clone().get_matches_from_safe(vec![
+            "paperoni",
+            "http://example.org",
+            "--merge",
+            "foo",
+            "--output-dir",
+            "~",
+        ]);
+        assert!(result.is_err());
+        assert_eq!(clap::ErrorKind::ArgumentConflict, result.unwrap_err().kind);
+
+        // It returns an error when both no-css and no-header-css are used
+        let result = app.clone().get_matches_from_safe(vec![
+            "paperoni",
+            "http://example.org",
+            "--no-css",
+            "--no-header-css",
+        ]);
+        assert!(result.is_err());
+        assert_eq!(clap::ErrorKind::ArgumentConflict, result.unwrap_err().kind);
+
+        // It returns an error when inline-toc is used without merge
+        let result = app.clone().get_matches_from_safe(vec![
+            "paperoni",
+            "http://example.org",
+            "--inline-toc",
+        ]);
+        assert!(result.is_err());
+        assert_eq!(
+            clap::ErrorKind::MissingRequiredArgument,
+            result.unwrap_err().kind
+        );
+
+        // It returns an error when inline-images is used without export
+        let result = app.clone().get_matches_from_safe(vec![
+            "paperoni",
+            "http://example.org",
+            "--inline-images",
+        ]);
+        assert!(result.is_err());
+        assert_eq!(
+            clap::ErrorKind::MissingRequiredArgument,
+            result.unwrap_err().kind
+        );
+
+        // It returns an error when export is given an invalid value
+        let result = app.clone().get_matches_from_safe(vec![
+            "paperoni",
+            "http://example.org",
+            "--export",
+            "pdf",
+        ]);
+        assert!(result.is_err());
+        assert_eq!(clap::ErrorKind::InvalidValue, result.unwrap_err().kind);
+
+        // It returns an error when a max-conn is given a negative number.
+        let result = app.clone().get_matches_from_safe(vec![
+            "paperoni",
+            "http://example.org",
+            "--max-conn",
+            "-1",
+        ]);
+        assert!(result.is_err());
+        // The cli is configured not to accept negative numbers so passing "-1" would have it be read as a flag called 1
+        assert_eq!(clap::ErrorKind::UnknownArgument, result.unwrap_err().kind);
+    }
+
+    #[test]
+    fn test_init_with_cli() {
+        let yaml_config = load_yaml!("cli_config.yml");
+        let app = App::from_yaml(yaml_config);
+
+        // It returns an error when the urls passed are whitespace
+        let matches = app.clone().get_matches_from(vec!["paperoni", ""]);
+        let app_config = AppConfig::try_from(matches);
+        assert!(app_config.is_err());
+        assert_eq!(Error::NoUrls, app_config.unwrap_err());
+
+        // It returns an error when inline-toc is used when exporting to HTML
+        let matches = app.clone().get_matches_from(vec![
+            "paperoni",
+            "http://example.org",
+            "--merge",
+            "foo",
+            "--export",
+            "html",
+            "--inline-toc",
+        ]);
+        let app_config = AppConfig::try_from(matches);
+        assert!(app_config.is_err());
+        assert_eq!(Error::WrongExportInliningToC, app_config.unwrap_err());
+        // It returns an Ok when inline-toc is used when exporting to epub
+        let matches = app.clone().get_matches_from(vec![
+            "paperoni",
+            "http://example.org",
+            "--merge",
+            "foo",
+            "--export",
+            "epub",
+            "--inline-toc",
+        ]);
+        assert!(AppConfig::try_from(matches).is_ok());
+
+        // It returns an error when inline-images is used when exporting to epub
+    }
 }

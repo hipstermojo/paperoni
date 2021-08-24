@@ -12,7 +12,7 @@ args:
       long: file
       help: Input file containing links
       takes_value: true
-  - output_directory:
+  - output-directory:
       short: o
       long: output-dir
       help: Directory to store output epub documents
@@ -70,7 +70,6 @@ args:
       possible_values: [html, epub]
       value_name: type
       takes_value: true
-      default_value: epub
   - inline-images:
       long: inline-images
       help: Inlines the article images when exporting to HTML using base64. Pass --help to learn more.
