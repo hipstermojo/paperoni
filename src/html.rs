@@ -12,7 +12,7 @@ use kuchiki::{traits::*, NodeRef};
 use log::{debug, error, info};
 
 use crate::{
-    cli::{self, AppConfig},
+    cli::{self, AppConfig, CSSConfig},
     errors::PaperoniError,
     extractor::Article,
     moz_readability::MetaData,
@@ -91,38 +91,33 @@ pub fn generate_html_exports(
                     *id_attr = format!("readability-page-{}", idx);
                 }
 
-                for (img_url, mime_type_opt) in &article.img_urls {
-                    if app_config.is_inlining_images {
-                        info!("Inlining images for {}", title);
-                        let result = update_imgs_base64(
-                            article,
-                            img_url,
-                            mime_type_opt.as_deref().unwrap_or("image/*"),
-                        );
+                if app_config.is_inlining_images {
+                    info!("Inlining images for {}", title);
+                    let result = update_imgs_base64(article);
 
-                        if let Err(e) = result {
-                            let mut err: PaperoniError = e.into();
-                            err.set_article_source(title);
-                            error!("Unable to copy images to imgs dir for {}", title);
-                            errors.push(err);
-                        }
+                    if let Err(e) = result {
+                        let mut err: PaperoniError = e.into();
+                        err.set_article_source(title);
+                        error!("Unable to copy images to imgs dir for {}", title);
+                        errors.push(err);
+                    }
 
-                        info!("Completed inlining images for {}", title);
+                    info!("Completed inlining images for {}", title);
+                } else {
+                    info!("Copying images to imgs dir for {}", title);
+                    let result = update_img_urls(article, &imgs_dir_path).map_err(|e| {
+                        let mut err: PaperoniError = e.into();
+                        err.set_article_source(title);
+                        err
+                    });
+                    if let Err(e) = result {
+                        error!("Unable to copy images to imgs dir for {}", title);
+                        errors.push(e);
                     } else {
-                        info!("Copying images to imgs dir for {}", title);
-                        let result = update_img_urls(article, &imgs_dir_path).map_err(|e| {
-                            let mut err: PaperoniError = e.into();
-                            err.set_article_source(title);
-                            err
-                        });
-                        if let Err(e) = result {
-                            error!("Unable to copy images to imgs dir for {}", title);
-                            errors.push(e);
-                        } else {
-                            info!("Successfully copied images to imgs dir for {}", title);
-                        }
+                        info!("Successfully copied images to imgs dir for {}", title);
                     }
                 }
+
                 bar.inc(1);
                 successful_articles_table.add_row(vec![title]);
                 body_elem.as_node().append(article_elem.as_node().clone());
@@ -137,7 +132,8 @@ pub fn generate_html_exports(
                     .map(|article| (article.metadata(), article.url.as_str()))
                     .collect(),
             );
-            inline_css(&base_html_elem, app_config);
+            inline_css(&base_html_elem, &app_config.css_config);
+            remove_existing_stylesheet_link(&base_html_elem);
 
             info!("Added title, footer and inlined styles for {}", name);
 
@@ -199,13 +195,7 @@ pub fn generate_html_exports(
                     let mut out_file = File::create(&file_name)?;
 
                     if app_config.is_inlining_images {
-                        for (img_url, mime_type_opt) in &article.img_urls {
-                            update_imgs_base64(
-                                article,
-                                img_url,
-                                mime_type_opt.as_deref().unwrap_or("image/*"),
-                            )?
-                        }
+                        update_imgs_base64(article)?;
                     } else {
                         let base_path =
                             Path::new(app_config.output_directory.as_deref().unwrap_or("."));
@@ -233,7 +223,8 @@ pub fn generate_html_exports(
 
                     insert_title_elem(article.node_ref(), article.metadata().title());
                     insert_appendix(article.node_ref(), vec![(article.metadata(), &article.url)]);
-                    inline_css(article.node_ref(), app_config);
+                    inline_css(article.node_ref(), &app_config.css_config);
+                    remove_existing_stylesheet_link(article.node_ref());
 
                     article.node_ref().serialize(&mut out_file)?;
                     Ok(())
@@ -268,24 +259,26 @@ fn create_qualname(name: &str) -> QualName {
 }
 
 /// Updates the src attribute of `<img>` elements with a base64 encoded string of the image data
-fn update_imgs_base64(
-    article: &Article,
-    img_url: &str,
-    mime_type: &str,
-) -> Result<(), std::io::Error> {
+fn update_imgs_base64(article: &Article) -> Result<(), std::io::Error> {
     let temp_dir = std::env::temp_dir();
-    let img_path = temp_dir.join(img_url);
-    let img_bytes = std::fs::read(img_path)?;
-    let img_base64_str = format!("data:image:{};base64,{}", mime_type, encode(img_bytes));
+    for (img_url, mime_type) in &article.img_urls {
+        let img_path = temp_dir.join(img_url);
+        let img_bytes = std::fs::read(img_path)?;
+        let img_base64_str = format!(
+            "data:image:{};base64,{}",
+            mime_type.as_deref().unwrap_or("image/*"),
+            encode(img_bytes)
+        );
 
-    let img_elems = article
-        .node_ref()
-        .select(&format!("img[src=\"{}\"]", img_url))
-        .unwrap();
-    for img_elem in img_elems {
-        let mut img_attr = img_elem.attributes.borrow_mut();
-        if let Some(src_attr) = img_attr.get_mut("src") {
-            *src_attr = img_base64_str.clone();
+        let img_elems = article
+            .node_ref()
+            .select(&format!("img[src=\"{}\"]", img_url))
+            .unwrap();
+        for img_elem in img_elems {
+            let mut img_attr = img_elem.attributes.borrow_mut();
+            if let Some(src_attr) = img_attr.get_mut("src") {
+                *src_attr = img_base64_str.clone();
+            }
         }
     }
     Ok(())
@@ -344,18 +337,23 @@ fn insert_appendix(root_node: &NodeRef, article_links: Vec<(&MetaData, &str)>) {
             format!("<a href=\"{}\">{}</a><br></br>", url, article_name)
         })
         .collect();
-    let footer_inner_html = format!("<h2>Appendix</h2><h2>Article sources</h3>{}", link_tags);
-    let footer_elem =
-        kuchiki::parse_fragment(create_qualname("footer"), Vec::new()).one(footer_inner_html);
-    root_node.append(footer_elem);
+    let footer_inner_html = format!(
+        "<footer><h2>Appendix</h2><h3>Article sources</h3>{}</footer>",
+        link_tags
+    );
+    let footer_container =
+        kuchiki::parse_fragment(create_qualname("div"), Vec::new()).one(footer_inner_html);
+    let footer_elem = footer_container.select_first("footer").unwrap();
+
+    root_node.append(footer_elem.as_node().clone());
 }
 
 /// Inlines the CSS stylesheets into the HTML article node
-fn inline_css(root_node: &NodeRef, app_config: &AppConfig) {
+fn inline_css(root_node: &NodeRef, css_config: &CSSConfig) {
     let body_stylesheet = include_str!("./assets/body.min.css");
     let header_stylesheet = include_str!("./assets/headers.min.css");
     let mut css_str = String::new();
-    match app_config.css_config {
+    match css_config {
         cli::CSSConfig::NoHeaders => {
             css_str.push_str(body_stylesheet);
         }
@@ -371,21 +369,118 @@ fn inline_css(root_node: &NodeRef, app_config: &AppConfig) {
     let style_container =
         kuchiki::parse_fragment(create_qualname("div"), Vec::new()).one(css_html_str);
     let style_elem = style_container.select_first("style").unwrap();
-    match root_node.select_first("head") {
-        Ok(head_elem) => {
-            head_elem.as_node().prepend(style_elem.as_node().to_owned());
-        }
-        Err(_) => {
-            debug!("{}", HEAD_ELEM_NOT_FOUND);
-            let html_elem = root_node.select_first("html").unwrap();
-            let head_elem = NodeRef::new_element(create_qualname("head"), BTreeMap::new());
-            head_elem.prepend(style_elem.as_node().to_owned());
-            html_elem.as_node().prepend(head_elem);
-        }
-    }
+    let head_elem = root_node.select_first("head").expect(HEAD_ELEM_NOT_FOUND);
+    head_elem.as_node().prepend(style_elem.as_node().to_owned());
+}
 
-    // Remove the <link> of the stylesheet since styles are now inlined
+/// Removes the <link> of the stylesheet. This is used when inlining styles
+fn remove_existing_stylesheet_link(root_node: &NodeRef) {
     if let Ok(style_link_elem) = root_node.select_first("link[href=\"stylesheet.css\"]") {
         style_link_elem.as_node().detach();
     };
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn test_insert_title_elem() {
+        let title = "Sample title";
+        let html_str = r#"<html><head><meta charset="UTF-8"/></head><body></body></html>"#;
+        let doc = kuchiki::parse_html().one(html_str);
+        assert_eq!(0, doc.select("title").unwrap().count());
+
+        insert_title_elem(&doc, title);
+        assert_eq!(1, doc.select("title").unwrap().count());
+        assert_eq!(title, doc.select_first("title").unwrap().text_contents());
+    }
+
+    #[test]
+    fn test_create_qualname() {
+        let name = "div";
+        assert_eq!(
+            create_qualname(name),
+            QualName::new(
+                None,
+                Namespace::from("http://www.w3.org/1999/xhtml"),
+                LocalName::from(name)
+            )
+        );
+    }
+
+    #[test]
+    fn test_inline_css() {
+        let html_str = r#"<html>
+        <head><meta charset="UTF-8"/></head>
+        <body>
+            <p>Lorem ipsum sample text goes here.</p>
+        </body>
+        </html>"#;
+        let doc = kuchiki::parse_html().one(html_str);
+        let body_stylesheet = include_str!("./assets/body.min.css");
+        let header_stylesheet = include_str!("./assets/headers.min.css");
+        assert_eq!(0, doc.select("style").unwrap().count());
+
+        inline_css(&doc, &CSSConfig::None);
+        assert_eq!(0, doc.select("style").unwrap().count());
+
+        inline_css(&doc, &CSSConfig::NoHeaders);
+        assert_eq!(1, doc.select("style").unwrap().count());
+        let style_elem = doc.select_first("style").unwrap();
+        assert_eq!(body_stylesheet, style_elem.text_contents());
+
+        let doc = kuchiki::parse_html().one(html_str);
+        inline_css(&doc, &CSSConfig::All);
+        assert_eq!(1, doc.select("style").unwrap().count());
+        let style_elem = doc.select_first("style").unwrap();
+        assert_eq!(
+            format!("{}{}", body_stylesheet, header_stylesheet),
+            style_elem.text_contents()
+        );
+    }
+
+    #[test]
+    fn test_remove_existing_stylesheet_link() {
+        let html_str = r#"<html>
+        <head><link href="stylesheet.css"></link></head>
+        <body><p>Lorem ipsum sample text goes here.</p></body></html>"#;
+        let doc = kuchiki::parse_html().one(html_str);
+        assert_eq!(1, doc.select("link").unwrap().count());
+        remove_existing_stylesheet_link(&doc);
+        assert_eq!(0, doc.select("link").unwrap().count());
+    }
+
+    #[test]
+    fn test_insert_appendix() {
+        let html_str = r#"<html>
+        <head><meta charset="UTF-8"/></head>
+        <body>
+            <p>Lorem ipsum sample text goes here.</p>
+        </body>
+        </html>"#;
+        let doc = kuchiki::parse_html().one(html_str);
+        let meta_data = MetaData::new();
+
+        assert_eq!(0, doc.select("footer").unwrap().count());
+
+        insert_appendix(&doc, vec![(&meta_data, "http://example.org")]);
+
+        assert_eq!(1, doc.select("footer").unwrap().count());
+        assert_eq!(1, doc.select("footer > h2").unwrap().count());
+        assert_eq!(
+            "Appendix",
+            doc.select_first("footer > h2").unwrap().text_contents()
+        );
+        assert_eq!(1, doc.select("footer > h3").unwrap().count());
+        assert_eq!(
+            "Article sources",
+            doc.select_first("footer > h3").unwrap().text_contents()
+        );
+        assert_eq!(1, doc.select("a").unwrap().count());
+
+        let anchor_elem = doc.select_first("a").unwrap();
+        assert_eq!("http://example.org", anchor_elem.text_contents());
+        let anchor_attrs = anchor_elem.attributes.borrow();
+        assert_eq!(Some("http://example.org"), anchor_attrs.get("href"));
+    }
 }

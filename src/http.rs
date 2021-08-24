@@ -150,6 +150,15 @@ async fn process_img_response<'a>(
     let img_mime = img_response
         .content_type()
         .map(|mime| mime.essence().to_string());
+    if let Some(mime_str) = &img_mime {
+        if !mime_str.starts_with("image/") {
+            return Err(ErrorKind::HTTPError(format!(
+                "Invalid image MIME type: {} for {}",
+                mime_str, url
+            ))
+            .into());
+        }
+    }
     let img_ext = match img_response
         .content_type()
         .map(|mime| map_mime_subtype_to_ext(mime.subtype()).to_string())

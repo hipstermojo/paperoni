@@ -4,6 +4,7 @@ use kuchiki::{traits::*, NodeRef};
 use crate::errors::PaperoniError;
 use crate::moz_readability::{MetaData, Readability};
 
+/// A tuple of the url and an Option of the resource's MIME type
 pub type ResourceInfo = (String, Option<String>);
 
 pub struct Article {
