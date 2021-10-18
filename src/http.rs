@@ -5,6 +5,7 @@ use futures::StreamExt;
 use indicatif::ProgressBar;
 use log::warn;
 use log::{debug, info};
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::cli::AppConfig;
@@ -22,49 +23,160 @@ pub fn download(
         let urls_iter = app_config.urls.iter().map(|url| fetch_html(url));
         let mut responses = stream::from_iter(urls_iter).buffered(app_config.max_conn);
         let mut articles = Vec::new();
+        // Collect all urls that couldn't extract here
+        let mut retry_with_paperteer: Vec<String> = Vec::new();
         while let Some(fetch_result) = responses.next().await {
             match fetch_result {
                 Ok((url, html)) => {
-                    debug!("Extracting {}", &url);
-                    let mut extractor = Article::from_html(&html, &url);
-                    bar.set_message("Extracting...");
-                    match extractor.extract_content() {
-                        Ok(_) => {
-                            extractor.extract_img_urls();
-                            if let Err(img_errors) =
-                                download_images(&mut extractor, &Url::parse(&url).unwrap(), &bar)
-                                    .await
-                            {
-                                partial_downloads
-                                    .push(PartialDownload::new(&url, extractor.metadata().title()));
-                                warn!(
-                                    "{} image{} failed to download for {}",
-                                    img_errors.len(),
-                                    if img_errors.len() > 1 { "s" } else { "" },
-                                    url
-                                );
-                                for img_error in img_errors {
-                                    warn!(
-                                        "{}\n\t\tReason {}",
-                                        img_error.url().as_ref().unwrap(),
-                                        img_error
-                                    );
-                                }
-                            }
-                            articles.push(extractor);
-                        }
-                        Err(mut e) => {
-                            e.set_article_source(&url);
-                            errors.push(e);
-                        }
+                    match extract_and_download_imgs(
+                        &url,
+                        html,
+                        bar,
+                        partial_downloads,
+                        &mut articles,
+                    )
+                    .await
+                    {
+                        Ok(_) => bar.inc(1),
+
+                        // All errors are pushed into here since they're readability issues.
+                        Err(_) => retry_with_paperteer.push(url),
                     }
+
+                    // Outside the stream, make a new one to retry with paperteer
                 }
                 Err(e) => errors.push(e),
             }
-            bar.inc(1);
+        }
+        if !retry_with_paperteer.is_empty() {
+            fetch_html_from_paperteer(
+                retry_with_paperteer,
+                app_config,
+                bar,
+                partial_downloads,
+                errors,
+                &mut articles,
+            )
+            .await
+            .unwrap();
         }
         articles
     })
+}
+
+async fn extract_and_download_imgs<'a>(
+    url: &str,
+    html: String,
+    bar: &ProgressBar,
+    partial_downloads: &mut Vec<PartialDownload>,
+    articles: &mut Vec<Article>,
+) -> Result<(), PaperoniError> {
+    debug!("Extracting {}", &url);
+    let mut extractor = Article::from_html(&html, &url);
+    bar.set_message("Extracting...");
+    match extractor.extract_content() {
+        Ok(_) => {
+            extractor.extract_img_urls();
+            if let Err(img_errors) =
+                download_images(&mut extractor, &Url::parse(&url).unwrap(), &bar).await
+            {
+                partial_downloads.push(PartialDownload::new(&url, extractor.metadata().title()));
+                warn!(
+                    "{} image{} failed to download for {}",
+                    img_errors.len(),
+                    if img_errors.len() > 1 { "s" } else { "" },
+                    &url
+                );
+                for img_error in img_errors {
+                    warn!(
+                        "{}\n\t\tReason {}",
+                        img_error.url().as_ref().unwrap(),
+                        img_error
+                    );
+                }
+            }
+            articles.push(extractor);
+            Ok(())
+        }
+        Err(mut e) => {
+            e.set_article_source(&url);
+            Err(e)
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct PaperteerBody {
+    urls: Vec<String>,
+}
+
+impl PaperteerBody {
+    fn new(urls: Vec<String>) -> Self {
+        PaperteerBody { urls }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct PaperteerItem {
+    url: String,
+    response: String,
+    html: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PaperteerResponse {
+    data: Vec<PaperteerItem>,
+}
+
+// TODO: Change signature to simply take a vec of urls and return a vec of urls with either html or an error
+// This also means that extracting and downloading imgs should be handled externally
+async fn fetch_html_from_paperteer(
+    urls: Vec<String>,
+    app_config: &AppConfig,
+    bar: &ProgressBar,
+    partial_downloads: &mut Vec<PartialDownload>,
+    errors: &mut Vec<PaperoniError>,
+    articles: &mut Vec<Article>,
+) -> Result<(), ()> {
+    // Get the paperteer url
+    let render_endpoint = "/api/render";
+    let paperteer_url = url::Url::parse("http://localhost:3000")
+        .unwrap()
+        .join(render_endpoint)
+        .unwrap();
+
+    // Build request body with urls
+    let urls_str = urls.into_iter().map(|url| url.to_string()).collect();
+    let body = PaperteerBody::new(urls_str);
+
+    // Send to the paperteer url
+    let mut res = surf::post(paperteer_url)
+        .body(surf::Body::from_json(&body).unwrap())
+        .await
+        .unwrap();
+
+    // Receive the json response
+    // TODO: Check for body response
+    let PaperteerResponse { data } = res.body_json().await.unwrap();
+
+    // For each url, extract the article and images
+    for item in data {
+        let PaperteerItem {
+            html,
+            url,
+            response,
+        } = item;
+        if response == "ok" {
+            // Run the extract and download fn
+            match extract_and_download_imgs(&url, html, bar, partial_downloads, articles).await {
+                Ok(_) => bar.inc(1),
+                Err(e) => errors.push(e),
+            }
+        } else {
+            errors.push(crate::errors::ErrorKind::HTTPError("Paperteer failed".into()).into());
+        }
+    }
+    Ok(())
 }
 
 pub async fn fetch_html(url: &str) -> Result<HTMLResource, PaperoniError> {
