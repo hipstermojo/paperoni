@@ -17,7 +17,7 @@ const FLAG_STRIP_UNLIKELYS: u32 = 0x1;
 const FLAG_WEIGHT_CLASSES: u32 = 0x2;
 const FLAG_CLEAN_CONDITIONALLY: u32 = 0x4;
 const READABILITY_SCORE: &'static str = "readability-score";
-const HTML_NS: &'static str = "http://www.w3.org/1999/xhtml";
+pub const HTML_NS: &'static str = "http://www.w3.org/1999/xhtml";
 // TODO: Change to HashSet
 const PHRASING_ELEMS: [&str; 39] = [
     "abbr", "audio", "b", "bdo", "br", "button", "cite", "code", "data", "datalist", "dfn", "em",

@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
+
+use html5ever::{LocalName, Namespace, QualName};
 use itertools::Itertools;
 use kuchiki::{traits::*, NodeRef};
 
 use crate::errors::PaperoniError;
-use crate::moz_readability::{MetaData, Readability};
+use crate::moz_readability::{MetaData, Readability, HTML_NS};
 
 /// A tuple of the url and an Option of the resource's MIME type
 pub type ResourceInfo = (String, Option<String>);
@@ -29,6 +32,7 @@ impl Article {
     /// the source of the content
     pub fn extract_content(&mut self) -> Result<(), PaperoniError> {
         self.readability.parse(&self.url)?;
+        self.reinsert_title_heading();
         if let Some(article_node_ref) = &self.readability.article_node {
             let template = r#"
             <!DOCTYPE html>
@@ -72,6 +76,20 @@ impl Article {
         self.node_ref_opt.as_ref().expect(
             "Article node doesn't exist. This may be because the document has not been parsed",
         )
+    }
+
+    fn reinsert_title_heading(&mut self) {
+        if let Some(article_node_ref) = &self.readability.article_node {
+            if let Ok(article_root_ref) = article_node_ref.select_first("div#readability-page-1") {
+                let article_root_elem = article_root_ref.as_node();
+                let h1_elem = NodeRef::new_element(
+                    QualName::new(None, Namespace::from(HTML_NS), LocalName::from("h1")),
+                    BTreeMap::new(),
+                );
+                h1_elem.append(NodeRef::new_text(self.readability.metadata.title()));
+                article_root_elem.prepend(h1_elem);
+            };
+        }
     }
 
     pub fn metadata(&self) -> &MetaData {

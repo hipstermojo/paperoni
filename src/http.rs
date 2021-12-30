@@ -132,7 +132,7 @@ struct PaperteerResponse {
 // This also means that extracting and downloading imgs should be handled externally
 async fn fetch_html_from_paperteer(
     urls: Vec<String>,
-    app_config: &AppConfig,
+    _app_config: &AppConfig,
     bar: &ProgressBar,
     partial_downloads: &mut Vec<PartialDownload>,
     errors: &mut Vec<PaperoniError>,
