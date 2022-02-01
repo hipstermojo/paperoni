@@ -24,7 +24,7 @@ pub fn download(
         let mut responses = stream::from_iter(urls_iter).buffered(app_config.max_conn);
         let mut articles = Vec::new();
         // Collect all urls that couldn't extract here
-        let mut retry_with_paperteer: Vec<String> = Vec::new();
+        // let mut retry_with_paperteer: Vec<String> = Vec::new();
         while let Some(fetch_result) = responses.next().await {
             match fetch_result {
                 Ok((url, html)) => {
@@ -40,7 +40,7 @@ pub fn download(
                         Ok(_) => bar.inc(1),
 
                         // All errors are pushed into here since they're readability issues.
-                        Err(_) => retry_with_paperteer.push(url),
+                        Err(e) => errors.push(e),
                     }
 
                     // Outside the stream, make a new one to retry with paperteer
@@ -48,18 +48,18 @@ pub fn download(
                 Err(e) => errors.push(e),
             }
         }
-        if !retry_with_paperteer.is_empty() {
-            fetch_html_from_paperteer(
-                retry_with_paperteer,
-                app_config,
-                bar,
-                partial_downloads,
-                errors,
-                &mut articles,
-            )
-            .await
-            .unwrap();
-        }
+        // if !retry_with_paperteer.is_empty() {
+        //     fetch_html_from_paperteer(
+        //         retry_with_paperteer,
+        //         app_config,
+        //         bar,
+        //         partial_downloads,
+        //         errors,
+        //         &mut articles,
+        //     )
+        //     .await
+        //     .unwrap();
+        // }
         articles
     })
 }
@@ -130,7 +130,7 @@ struct PaperteerResponse {
 
 // TODO: Change signature to simply take a vec of urls and return a vec of urls with either html or an error
 // This also means that extracting and downloading imgs should be handled externally
-async fn fetch_html_from_paperteer(
+async fn _fetch_html_from_paperteer(
     urls: Vec<String>,
     _app_config: &AppConfig,
     bar: &ProgressBar,
